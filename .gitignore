@@ -1,0 +1,58 @@
+# --- Build directories -------------------------------------------------------
+/build/
+/build-*/
+/out/
+/.vs/
+/cmake-build-*/
+/.claude/
+CMakeUserPresets.json
+
+# --- CMake artifacts ---------------------------------------------------------
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+compile_commands.json
+
+# --- IDE / editor ------------------------------------------------------------
+*.vcxproj.user
+*.suo
+*.user
+*.sln.docstates
+.idea/
+.vscode/
+*.code-workspace
+
+# --- Compiled output ---------------------------------------------------------
+*.obj
+*.o
+*.a
+*.lib
+*.exp
+*.pdb
+*.idb
+*.ilk
+*.dll
+*.exe
+*.so
+*.dylib
+*.dSYM/
+
+# --- OS junk -----------------------------------------------------------------
+Thumbs.db
+.DS_Store
+PROJ_INIT.md
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# --- OpenRipper runtime outputs ---------------------------------------------
+/captures/
+/dumps/
+OpenRipper.log
+*.log
+
+# --- Third-party caches (vcpkg, etc., added in Stage 2) ---------------------
+/vcpkg_installed/
+/.vcpkg-root

@@ -1,0 +1,40 @@
+// OpenRipper - src/core/config.hpp
+//
+// Lightweight key=value config used by both the CLI and the injected backend
+// DLLs. The format is deliberately trivial (no TOML/JSON dep) so the backend
+// can parse it inside DllMain's init thread with zero allocations beyond the
+// std lib.
+
+#pragma once
+
+#include <filesystem>
+
+#include "logger.hpp"
+
+namespace openripper {
+
+struct Config {
+    // Path of the rolling log file. Empty disables the file sink.
+    std::filesystem::path log_file = "OpenRipper.log";
+
+    // Root directory under which RipSessions are written.
+    std::filesystem::path output_dir = "captures";
+
+    // Verbosity floor for the logger.
+    LogLevel log_level = LogLevel::Info;
+
+    // VK_* virtual-key code for "rip current frame". 0 disables.
+    // Default: 0x79 == VK_F10.
+    unsigned int rip_hotkey = 0x79;
+
+    // If true, the backend latches the frame and pauses presentation while
+    // capture work runs. If false, the rip happens asynchronously.
+    bool time_freeze_on_rip = false;
+
+    // Parse a simple `key=value` file. `#` starts a comment. Missing keys
+    // retain their defaults; unknown keys are silently ignored (logged at
+    // Trace level for debugging). Returns the populated Config.
+    static Config load(const std::filesystem::path& path);
+};
+
+} // namespace openripper
