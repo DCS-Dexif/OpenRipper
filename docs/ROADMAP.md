@@ -15,13 +15,13 @@ are runnable end-to-end against at least one real-world target.
 
 ## Stage 2 — Vertex/index capture (D3D11)
 
-* [ ] Snapshot `IASetVertexBuffers` / `IASetIndexBuffer` /
+* [x] Snapshot `IASetVertexBuffers` / `IASetIndexBuffer` /
       `IASetInputLayout` / `IASetPrimitiveTopology` state per draw.
-* [ ] Copy bound vertex + index buffers from GPU to CPU (CopyResource into
+* [x] Copy bound vertex + index buffers from GPU to CPU (CopyResource into
       `D3D11_USAGE_STAGING`, `Map` to read).
-* [ ] Decode `D3D11_INPUT_ELEMENT_DESC[]` into semantic-tagged
+* [x] Decode `D3D11_INPUT_ELEMENT_DESC[]` into semantic-tagged
       `MeshSnapshot::VertexAttribute` records.
-* [ ] OBJ exporter writes positions + normals + UVs for the captured frame.
+* [x] OBJ exporter writes positions + normals + UVs for the captured frame.
 
 ## Stage 3 — Textures
 

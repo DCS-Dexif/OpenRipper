@@ -7,7 +7,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
+#include <limits>
 
 #include "logger.hpp"
 
@@ -30,6 +32,11 @@ struct Config {
     // If true, the backend latches the frame and pauses presentation while
     // capture work runs. If false, the rip happens asynchronously.
     bool time_freeze_on_rip = false;
+
+    // Absolute frame number (0-based, counting from the first Present after DLL
+    // load) on which to capture all draws and write OBJ files. UINT64_MAX
+    // means disabled. Stage 4 replaces this with the F10 hotkey mechanism.
+    std::uint64_t capture_frame = std::numeric_limits<std::uint64_t>::max();
 
     // Parse a simple `key=value` file. `#` starts a comment. Missing keys
     // retain their defaults; unknown keys are silently ignored (logged at

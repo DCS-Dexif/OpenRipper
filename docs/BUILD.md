@@ -71,6 +71,49 @@ executable. To attach to an already-running process:
 build\bin\OpenRipper.exe --pid 12345 --backend d3d11
 ```
 
+## Smoke test — Stage 2 vertex/index capture
+
+1. **Write a config file** next to the target EXE:
+
+   ```ini
+   # OpenRipper.cfg
+   capture_frame=120
+   output_dir=captures
+   log_level=info
+   ```
+
+   Frame 120 is ~2 seconds into a 60 Hz title — enough time for the title
+   screen to settle. Adjust as needed.
+
+2. **Launch**:
+
+   ```bat
+   build\bin\OpenRipper.exe --target "C:\Path\To\YourGame.exe" --backend d3d11
+   ```
+
+3. **Expected log output** (in `OpenRipper.log` next to the EXE):
+
+   ```
+   [INFO] OpenRipper_d3d11.dll loaded into: YourGame.exe
+   [INFO] config loaded from OpenRipper.cfg
+   [INFO] capture output dir: C:\Path\To\captures
+   [INFO] capture scheduled for frame 120
+   [INFO] D3D11 hooks installed (Present + CreateInputLayout + 4 Draw variants).
+   [DEBUG] frame 0 - 47 draw calls in last frame
+   ...
+   [INFO] capture: frame 000120 begin - capturing all draws
+   [INFO] capture: wrote frame000120_draw00000.obj
+   [INFO] capture: wrote frame000120_draw00001.obj
+   ...
+   [INFO] capture: frame 000120 complete (N draws written)
+   ```
+
+4. **Open an OBJ in Blender**: `File → Import → Wavefront (.obj)`. A mesh
+   with correct positions, normals, and UV layout should appear.
+
+5. **Regression check — no config**: delete `OpenRipper.cfg` and relaunch.
+   Log should show draw-count lines only, no capture activity, no crash.
+
 ## Common build problems
 
 | Symptom | Cause / Fix |

@@ -3,6 +3,8 @@
 add_library(OpenRipper_d3d11 SHARED
     dllmain.cpp
     hooks_d3d11.cpp
+    state_d3d11.cpp
+    capture_d3d11.cpp
 )
 
 target_link_libraries(OpenRipper_d3d11

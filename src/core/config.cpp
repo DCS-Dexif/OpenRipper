@@ -57,6 +57,7 @@ Config Config::load(const std::filesystem::path& path) {
         else if (key == "log_level")          cfg.log_level          = parse_level(val);
         else if (key == "rip_hotkey")         cfg.rip_hotkey         = static_cast<unsigned int>(std::stoul(val, nullptr, 0));
         else if (key == "time_freeze_on_rip") cfg.time_freeze_on_rip = parse_bool(val);
+        else if (key == "capture_frame")      cfg.capture_frame      = std::stoull(val);
         else {
             OR_LOG_TRACE("config: unknown key '{}' (ignored)", key);
         }

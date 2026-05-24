@@ -79,6 +79,42 @@ backend produced it.
 `TextureSnapshot` mirrors that contract for textures: width, height, mip
 count, array size, native format token, and raw pixels.
 
+## Capture pipeline (Stage 2)
+
+When `capture_frame=N` is set in `OpenRipper.cfg`, the D3D11 backend captures
+every draw call between `Present(N-1)` and `Present(N)`:
+
+```
+hooked_present (frame N-1) ─► set g_capture_active = true
+    │
+    ▼  (app draws frame N)
+hooked_Draw* ──► capture_draw()
+    │               1. ctx->GetDevice()
+    │               2. IAGetPrimitiveTopology / IAGetInputLayout /
+    │                  IAGetIndexBuffer / IAGetVertexBuffers
+    │               3. lookup_input_layout() — decode D3D11_INPUT_ELEMENT_DESC[]
+    │               4. CreateBuffer(STAGING) + CopyResource + Map/memcpy/Unmap
+    │               5. return MeshSnapshot
+    ▼
+write_obj(MeshSnapshot)  ─►  captures/frame######_draw#####.obj
+    │
+    ▼ (more draws, each gets its own .obj)
+hooked_present (frame N) ──► set g_capture_active = false
+```
+
+**Input-layout registry** (`src/backends/d3d11/state_d3d11.cpp`): because
+`ID3D11InputLayout` is opaque, we hook `ID3D11Device::CreateInputLayout`
+(vtable[11]) and store a deep copy of every `D3D11_INPUT_ELEMENT_DESC[]` keyed
+by layout pointer. Draw hooks look up the layout at capture time.
+
+**Immediate context only (Stage 2)**: `ctx->GetType()` is checked; deferred
+contexts are skipped with a one-time warning. Deferred-context capture (needed
+for command-list based renderers) is deferred to a future stage.
+
+**Trigger**: `g_capture_active` is an atomic flag in `hooks_d3d11.cpp` written
+by `hooked_present`. Stage 4 hotkey code will also write this flag; the flag
+is the only interface between the trigger source and the capture path.
+
 ## Anti-cheat & detection
 
 OpenRipper is **not** designed to evade anti-cheat. Hooking a process
