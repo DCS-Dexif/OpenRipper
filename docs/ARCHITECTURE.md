@@ -212,29 +212,48 @@ Present(sc) ──► frame = fetch_add(1)
 
 ### D2D1 overlay
 
-`src/backends/d3d11/overlay_d3d11.cpp` renders a semi-transparent black
-rectangle + white text (`"CAPTURED — frame NNNNNN (M draws)"`) on the swap
-chain back buffer before `Present`. Lazy-initialized on the first `overlay_draw`
-call to avoid startup cost.
+`src/backends/d3d11/overlay_d3d11.cpp` renders white text on a black
+rectangle (`"CAPTURED — frame NNNNNN (M draws)"`) on the swap chain back
+buffer before `Present`. Lazy-initialized on the first `overlay_draw` call.
+
+Two rendering modes are selected at init:
+
+**Direct** — game device was created with `D3D11_CREATE_DEVICE_BGRA_SUPPORT`:
 
 ```
-overlay_draw(sc, frame)
-    lazy_init:
-        sc->GetDevice(ID3D11Device) → QI(IDXGIDevice)
-        D2D1CreateDevice(IDXGIDevice) → ID2D1Device  [D2D1.1 path]
-        ID2D1Device::CreateDeviceContext → ID2D1DeviceContext
-        sc->GetBuffer(0, IDXGISurface) → CreateBitmapFromDxgiSurface → SetTarget
-        DWriteCreateFactory → IDWriteFactory + IDWriteTextFormat (Arial 18pt Bold)
-        on D2D1 failure: window-title fallback (SetWindowTextW)
-    if overlay_frames > 0:
-        BeginDraw → FillRectangle + DrawText → EndDraw
-        if EndDraw == D2DERR_RECREATE_TARGET: release RT (recreated next frame)
-    --overlay_frames
+lazy_init:
+    sc→GetDevice(ID3D11Device) → QI(IDXGIDevice)
+    D2D1CreateDevice(game IDXGIDevice) → ID2D1Device → CreateDeviceContext
+    sc→GetBuffer(0, IDXGISurface) → CreateBitmapFromDxgiSurface → SetTarget
+    DWriteCreateFactory + CreateTextFormat (Arial 18pt Bold)
+overlay_draw:
+    BeginDraw → FillRectangle + DrawText → EndDraw (renders to back buffer)
+    if EndDraw fails: release RT (recreated next frame)
 ```
 
-If the swap chain surface is incompatible with D2D1 (MSAA, HDR, non-BGRA/RGBA
-format), the overlay falls back to temporarily updating the window title, then
-restoring it after `overlay_frames` hits zero.
+**Indirect** — game device lacks BGRA support (most real-world games):
+
+```
+lazy_init:
+    game device → QI(IDXGIDevice) → GetAdapter()
+    D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN,
+                      D3D11_CREATE_DEVICE_BGRA_SUPPORT) → helper device
+    D2D1CreateDevice(helper IDXGIDevice) → ID2D1Device → CreateDeviceContext
+    Create helper_rt  (412×30 B8G8R8A8 BIND_RENDER_TARGET on helper device)
+    Create helper_stg (412×30 B8G8R8A8 STAGING, CPU_ACCESS_READ)
+    helper_rt → CreateBitmapFromDxgiSurface → SetTarget
+overlay_draw:
+    BeginDraw → FillRectangle + DrawText → EndDraw  [renders to helper_rt]
+    helper_ctx→CopyResource(helper_stg, helper_rt)
+    helper_ctx→Map(helper_stg) → pixels (~49 KB)
+    game_ctx→UpdateSubresource(back_buffer, dst_box{8,8,420,38}, pixels)
+    Unmap
+```
+
+The indirect path adds ~49 KB of CPU traffic per visible frame (opaque
+stamp; no alpha blending). Only active while the overlay is showing (~120
+frames per capture). Window-title fallback fires only if both D2D1 paths
+fail.
 
 ### Session output layout
 

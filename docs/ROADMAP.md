@@ -40,7 +40,9 @@ are runnable end-to-end against at least one real-world target.
 * [x] Output directory layout with per-session timestamps (`YYYYMMDD_HHMMSS/`)
       and `session.json` manifest.
 * [x] On-screen indicator: D2D1 text overlay "CAPTURED — frame NNNNNN" for
-      ~2 s; window-title fallback for MSAA/HDR swap chains.
+      ~2 s. Two-mode rendering: direct (game device has BGRA support) or
+      indirect via a helper BGRA device + CPU stamp (games that lack BGRA,
+      e.g. most DX11 titles). Window-title fallback if both D2D1 paths fail.
 * [ ] Stage 4.1 — `time_freeze_on_rip`: pause presentation during capture
       (deferred — complex; requires blocking Present and unblocking on a
       dedicated drain thread).
