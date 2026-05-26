@@ -3,7 +3,7 @@
 Stages are roughly ordered by dependency. A stage is "done" when its goals
 are runnable end-to-end against at least one real-world target.
 
-## Stage 1 — Foundation (current)
+## Stage 1 — Foundation
 
 * [x] CMake build system, dependency bootstrap (MinHook via FetchContent).
 * [x] Logger, config loader, common capture types (`MeshSnapshot`,
@@ -44,6 +44,9 @@ are runnable end-to-end against at least one real-world target.
 * [ ] Stage 4.1 — `time_freeze_on_rip`: pause presentation during capture
       (deferred — complex; requires blocking Present and unblocking on a
       dedicated drain thread).
+* [ ] Stage 4.2 — `flip_winding=true` config option: reverse OBJ face winding
+      order on export (for engines that use CW front-face convention, where
+      imported meshes appear inside-out in Blender/Maya).
 
 ## Stage 5 — Additional backends
 

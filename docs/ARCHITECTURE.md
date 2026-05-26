@@ -112,8 +112,9 @@ contexts are skipped with a one-time warning. Deferred-context capture (needed
 for command-list based renderers) is deferred to a future stage.
 
 **Trigger**: `g_capture_active` is an atomic flag in `hooks_d3d11.cpp` written
-by `hooked_present`. Stage 4 hotkey code will also write this flag; the flag
-is the only interface between the trigger source and the capture path.
+by `hooked_present`. The Stage 4 hotkey thread also writes this flag via
+`g_freeze_frames_remaining`; the flag is the only interface between any trigger
+source and the capture path.
 
 ## Capture pipeline (Stage 3)
 
@@ -219,10 +220,12 @@ call to avoid startup cost.
 ```
 overlay_draw(sc, frame)
     lazy_init:
-        D2D1CreateFactory → ID2D1Factory
+        sc->GetDevice(ID3D11Device) → QI(IDXGIDevice)
+        D2D1CreateDevice(IDXGIDevice) → ID2D1Device  [D2D1.1 path]
+        ID2D1Device::CreateDeviceContext → ID2D1DeviceContext
+        sc->GetBuffer(0, IDXGISurface) → CreateBitmapFromDxgiSurface → SetTarget
         DWriteCreateFactory → IDWriteFactory + IDWriteTextFormat (Arial 18pt Bold)
-        sc->GetBuffer(0, IDXGISurface) → CreateDxgiSurfaceRenderTarget
-        on failure: window-title fallback (SetWindowTextW)
+        on D2D1 failure: window-title fallback (SetWindowTextW)
     if overlay_frames > 0:
         BeginDraw → FillRectangle + DrawText → EndDraw
         if EndDraw == D2DERR_RECREATE_TARGET: release RT (recreated next frame)

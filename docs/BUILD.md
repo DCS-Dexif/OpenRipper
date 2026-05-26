@@ -215,9 +215,6 @@ correctly inside the new session subdirectory.
 | Symptom | Cause / Fix |
 | ------- | ----------- |
 | `d2d1.lib not found` | Install the Windows 10 SDK (Visual Studio Installer → Individual Components → Windows 10 SDK). d2d1.lib ships with the SDK. |
-
-| Symptom | Cause / Fix |
-| ------- | ----------- |
 | `<format>: No such file or directory` | Upgrade Visual Studio to 17.4 or newer; `std::format` is C++20 and requires recent MSVC. |
 | `MinHook.h: No such file or directory` | First-time configure: run with internet access so `FetchContent` can clone MinHook. Subsequent builds work offline. |
 | Linker error `d3d11.lib not found` | Install the Windows 10 SDK (Visual Studio Installer → Individual Components). |

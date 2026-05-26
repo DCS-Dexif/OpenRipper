@@ -153,7 +153,7 @@ bool write_obj(const MeshSnapshot& mesh, const std::filesystem::path& out_path) 
                      static_cast<int>(pos_attr->format), mesh.name);
         return false;
     }
-    const std::size_t vcount = vertex_count_from(positions, 3);
+    std::size_t vcount = vertex_count_from(positions, 3);
 
     // ---- Locate optional Normal attribute ----------------------------------
     const VertexAttribute* nrm_attr = nullptr;
@@ -179,6 +179,40 @@ bool write_obj(const MeshSnapshot& mesh, const std::filesystem::path& out_path) 
         uvs = extract_attribute(*uv_attr, mesh.vertex_streams, stride, 2);
         if (uvs.empty())
             OR_LOG_WARN("obj exporter: TexCoord format not extractable for '{}' - skipping vt", mesh.name);
+    }
+
+    // ---- Clamp vcount to the highest index actually referenced ----------------
+    // Prevents writing the full shared VB when only a small slice is indexed.
+    if (mesh.index_format != IndexFormat::None && !mesh.index_buffer.empty()) {
+        std::uint32_t max_ref = 0;
+        bool any = false;
+
+        auto update = [&](std::int64_t resolved) {
+            if (resolved >= 0 && static_cast<std::size_t>(resolved) < vcount) {
+                max_ref = std::max(max_ref, static_cast<std::uint32_t>(resolved));
+                any = true;
+            }
+        };
+
+        if (mesh.index_format == IndexFormat::U16) {
+            const auto* base = reinterpret_cast<const std::uint16_t*>(mesh.index_buffer.data());
+            const auto* idx  = base + mesh.start_index;
+            for (std::uint32_t i = 0; i + 2 < mesh.index_count; i += 3) {
+                update(static_cast<std::int64_t>(idx[i])     + mesh.base_vertex);
+                update(static_cast<std::int64_t>(idx[i + 1]) + mesh.base_vertex);
+                update(static_cast<std::int64_t>(idx[i + 2]) + mesh.base_vertex);
+            }
+        } else {
+            const auto* base = reinterpret_cast<const std::uint32_t*>(mesh.index_buffer.data());
+            const auto* idx  = base + mesh.start_index;
+            for (std::uint32_t i = 0; i + 2 < mesh.index_count; i += 3) {
+                update(static_cast<std::int64_t>(idx[i])     + mesh.base_vertex);
+                update(static_cast<std::int64_t>(idx[i + 1]) + mesh.base_vertex);
+                update(static_cast<std::int64_t>(idx[i + 2]) + mesh.base_vertex);
+            }
+        }
+
+        if (any) vcount = std::min(vcount, static_cast<std::size_t>(max_ref) + 1);
     }
 
     const bool has_normals = !normals.empty() && vertex_count_from(normals, 3) == vcount;

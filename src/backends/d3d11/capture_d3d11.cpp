@@ -43,6 +43,30 @@ struct ComOwner {
     explicit operator bool() const noexcept { return p != nullptr; }
 };
 
+// ---- Short display name for AttributeFormat (debug logs) ------------------
+constexpr const char* attr_format_name(openripper::AttributeFormat f) noexcept {
+    using AF = openripper::AttributeFormat;
+    switch (f) {
+    case AF::Float32x1: return "F32x1";
+    case AF::Float32x2: return "F32x2";
+    case AF::Float32x3: return "F32x3";
+    case AF::Float32x4: return "F32x4";
+    case AF::Float16x2: return "F16x2";
+    case AF::Float16x4: return "F16x4";
+    case AF::UInt32x1:  return "U32x1";
+    case AF::UInt32x2:  return "U32x2";
+    case AF::UInt32x3:  return "U32x3";
+    case AF::UInt32x4:  return "U32x4";
+    case AF::UInt16x2:  return "U16x2";
+    case AF::UInt16x4:  return "U16x4";
+    case AF::UInt8x4:   return "U8x4";
+    case AF::SNorm16x2: return "SN16x2";
+    case AF::SNorm16x4: return "SN16x4";
+    case AF::UNorm8x4:  return "UN8x4";
+    default:            return "?";
+    }
+}
+
 // ---- Byte-size of each AttributeFormat ------------------------------------
 // Used to resolve D3D11_APPEND_ALIGNED_ELEMENT offsets and to size readbacks.
 constexpr std::uint32_t attr_format_bytes(openripper::AttributeFormat f) noexcept {
@@ -454,6 +478,7 @@ std::optional<openripper::MeshSnapshot> capture_draw(ID3D11DeviceContext* ctx,
         // packed[s] tracks the next available byte offset in stream s when
         // APPEND_ALIGNED_ELEMENT is used.
         UINT packed[kMaxSlots]{};
+        bool position_found = false;
 
         for (std::size_t i = 0; i < elem_count; ++i) {
             const D3D11_INPUT_ELEMENT_DESC& e = il_desc.elements[i];
@@ -473,8 +498,42 @@ std::optional<openripper::MeshSnapshot> capture_draw(ID3D11DeviceContext* ctx,
             // Advance the running offset for this stream.
             packed[e.InputSlot] = attr.offset + attr_format_bytes(attr.format);
 
+            // Track canonical Position hits.
+            using VS = openripper::VertexSemantic;
+            using AF = openripper::AttributeFormat;
+            if (attr.semantic == VS::Position) {
+                position_found = true;
+            } else if (!position_found && attr.semantic == VS::Custom &&
+                       attr.stream == 0 && attr.offset == 0 &&
+                       (attr.format == AF::Float32x3 || attr.format == AF::Float32x4)) {
+                // Heuristic: first float3/4 at slot 0, offset 0 with an unrecognised
+                // semantic name is almost certainly the vertex position (e.g. SV_Position,
+                // ATTR0, VPOS, or engine-specific names).
+                attr.semantic = VS::Position;
+                position_found = true;
+                OR_LOG_DEBUG("capture: draw {} promoting '{}{}' to Position (heuristic)",
+                             draw_id, e.SemanticName,
+                             e.SemanticIndex ? std::to_string(e.SemanticIndex) : "");
+            }
+
             mesh.layout.attributes.push_back(attr);
         }
+    }
+
+    // Debug: emit one line showing every semantic + format so users can diagnose
+    // unrecognised engines without guessing.
+    {
+        std::string s;
+        for (std::size_t i = 0; i < elem_count; ++i) {
+            const auto& e = il_desc.elements[i];
+            const auto& a = mesh.layout.attributes[i];
+            if (i) s += ' ';
+            s += e.SemanticName;
+            if (e.SemanticIndex) s += std::to_string(e.SemanticIndex);
+            s += '/';
+            s += attr_format_name(a.format);
+        }
+        OR_LOG_DEBUG("capture: draw {} layout: {}", draw_id, s);
     }
 
     // ---- GPU -> CPU: vertex buffers ---------------------------------------
@@ -506,6 +565,10 @@ std::optional<openripper::MeshSnapshot> capture_draw(ID3D11DeviceContext* ctx,
             OR_LOG_WARN("capture: IB readback failed in draw {} - exporting non-indexed", draw_id);
             mesh.index_format = openripper::IndexFormat::None;
             mesh.index_count  = 0;
+        } else if (ib_offset > 0 && ib_offset < mesh.index_buffer.size()) {
+            mesh.index_buffer.erase(
+                mesh.index_buffer.begin(),
+                mesh.index_buffer.begin() + ib_offset);
         }
     } else {
         mesh.index_format = openripper::IndexFormat::None;
