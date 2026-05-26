@@ -4,7 +4,7 @@
 // read by hooks_d3d11 and capture_d3d11. All writes finish before
 // install_hooks() is called, so all subsequent accesses are read-only and need
 // no synchronisation — except g_capture_frame_target, which is atomic because
-// Stage 4 will allow the hotkey thread to write it at any time.
+// the Stage 4 hotkey thread writes it at any time from a separate polling thread.
 
 #pragma once
 

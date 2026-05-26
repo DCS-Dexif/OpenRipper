@@ -1,6 +1,6 @@
 // OpenRipper - src/backends/d3d11/capture_d3d11.hpp
 //
-// Per-draw capture entry point for the D3D11 backend (Stage 2).
+// Per-draw capture entry point for the D3D11 backend (Stages 2–3).
 // Called from each Draw* hook when g_capture_active is true.
 
 #pragma once

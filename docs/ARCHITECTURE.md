@@ -6,13 +6,13 @@ API. The launcher never touches the GPU; every hook lives inside a backend
 DLL loaded into the target process.
 
 ```
-+--------------------------+        +----------------------------+
-|  OpenRipper.exe (CLI)    |        | OpenRipper_d3d11.dll       |
-|  - parse args            |        | OpenRipper_d3d12.dll       |
-|  - launch target         |        | OpenRipper_vulkan.dll      |
-|  - inject backend DLL    |        |     ...                    |
-+------------+-------------+        | (loaded into game process) |
-             |                      +----------------------------+
++--------------------------+        +------------------------------+
+|  OpenRipper.exe (CLI)    |        | OpenRipper_d3d11.dll         |
+|  - parse args            |        | OpenRipper_d3d12.dll (plan.) |
+|  - launch target         |        | OpenRipper_vulkan.dll (plan.)|
+|  - inject backend DLL    |        |     ...                      |
++------------+-------------+        | (loaded into game process)   |
+             |                      +------------------------------+
              v                                    ^
    target.exe (suspended)  --resume-->  game runs with hooks live
 ```
@@ -27,7 +27,7 @@ DLL loaded into the target process.
 | `src/runtime/`        | Out-of-process helpers: process launching, DLL injection. |
 | `src/cli/`            | `OpenRipper.exe` — command-line front-end. |
 | `src/backends/<api>/` | One DLL per graphics API. Each backend installs hooks via MinHook and writes captured assets through the exporters. |
-| `src/exporters/`      | Format writers: OBJ today; glTF, DDS, PNG, JSON sidecar later. |
+| `src/exporters/`      | Format writers: OBJ, DDS, PNG, material JSON sidecar, session JSON. glTF planned (Stage 6). |
 | `src/gui/`            | (planned) Dear ImGui front-end. |
 | `tools/`              | (planned) standalone converters and Blender/Noesis importers. |
 

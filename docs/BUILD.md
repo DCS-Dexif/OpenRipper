@@ -71,6 +71,39 @@ executable. To attach to an already-running process:
 build\bin\OpenRipper.exe --pid 12345 --backend d3d11
 ```
 
+## Config reference (`OpenRipper.cfg`)
+
+Place `OpenRipper.cfg` next to the target EXE. Format: `key=value`, one per
+line. Lines beginning with `#` are comments. All keys are optional; unrecognised
+keys are silently ignored (logged at `trace` level).
+
+| Key | Default | Description |
+| --- | ------- | ----------- |
+| `output_dir` | `captures` | Root directory for session output. A timestamped subdirectory (`YYYYMMDD_HHMMSS/`) is created inside it per run. |
+| `log_file` | `OpenRipper.log` | Path of the rolling log file, relative to the target EXE. Empty string disables the file sink. |
+| `log_level` | `info` | Verbosity floor. Values: `trace` `debug` `info` `warn` `error` `off`. Use `debug` to see per-draw layout lines. |
+| `rip_hotkey` | `0x79` | Virtual-key code (VK_*) for the in-game rip hotkey. `0x79` = F10. Accepts hex (`0x79`) or decimal (`121`). `0` disables the hotkey. |
+| `capture_frame` | *(disabled)* | 0-based frame index (counting from the first `Present` after DLL load) on which to auto-trigger a capture. Omit or leave unset to use hotkey-only. |
+| `freeze_frames` | `1` | Number of consecutive frames to capture per trigger. `1` = single frame; `N` = burst of N frames (output named `frame######_*` per frame). |
+| `time_freeze_on_rip` | `false` | *(not yet implemented — deferred to Stage 4.1)* |
+
+**Example — hotkey-only, 2-frame burst, debug logging:**
+
+```ini
+output_dir=captures
+log_level=debug
+freeze_frames=2
+# rip_hotkey=0x79  # F10 (default)
+```
+
+**Example — auto-capture at frame 120:**
+
+```ini
+capture_frame=120
+output_dir=captures
+log_level=info
+```
+
 ## Smoke test — Stage 2 vertex/index capture
 
 1. **Write a config file** next to the target EXE:
