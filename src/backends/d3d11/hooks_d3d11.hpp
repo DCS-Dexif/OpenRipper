@@ -13,6 +13,11 @@ bool install_hooks();
 // installed.
 void remove_hooks();
 
+// Write the session manifest (session.json) and clear the frame accumulator.
+// Safe to call during DLL_PROCESS_DETACH process-termination (lpvReserved !=
+// null), where COM teardown is unsafe — COM cleanup is deliberately skipped.
+void flush_session_manifest_now();
+
 // If the configured capture_frame target is 0, pre-arm the capture active
 // flag so the very first frame's draws are captured. Call this from
 // dllmain's init_thread AFTER writing g_capture_frame_target in

@@ -159,7 +159,62 @@ bind at least one PS texture SRV before the captured draw.
    SRVs. Log shows `ps_textures: []` (or 0 draw records with textures) in the
    manifest; no `_ps_t*` files written; no crash.
 
+## Smoke test — Stage 4 UX
+
+Uses the same `d3d11_cube` test target (1500-frame run ≈ 25 s — enough time to
+press F10 manually).
+
+### Automated: config trigger + session dir
+
+Config (`OpenRipper.cfg`):
+
+```ini
+capture_frame=120
+output_dir=captures
+log_level=debug
+```
+
+Expected outputs under `captures/YYYYMMDD_HHMMSS/`:
+
+```
+frame000120_draw00000.obj
+frame000120_draw00000_ps_t0.png
+frame000120_materials.json
+session.json
+```
+
+`session.json` must be valid JSON; `frames_captured[0].frame` must equal 120.
+
+### Manual: F10 hotkey
+
+Remove `capture_frame` from the config (or comment it out). Launch the test
+with OpenRipper, wait for the window to appear, press **F10**. Within ~100 ms
+a new `frame######_*` set appears in the session directory and the overlay text
+`CAPTURED — frame NNNNNN` is visible in the window for ~2 seconds.
+
+### Multi-frame freeze
+
+```ini
+capture_frame=120
+freeze_frames=3
+output_dir=captures
+log_level=debug
+```
+
+Expected: `frame000120_*`, `frame000121_*`, and `frame000122_*` sets under the
+session directory, plus `session.json` listing all three frames.
+
+### Regression: Stage 2 / Stage 3 OBJ + PNG
+
+The session-dir layout changes the capture output path. Verify that existing
+Stage 2/3 files (`*.obj`, `*.png`, `*_materials.json`) are still written
+correctly inside the new session subdirectory.
+
 ## Common build problems
+
+| Symptom | Cause / Fix |
+| ------- | ----------- |
+| `d2d1.lib not found` | Install the Windows 10 SDK (Visual Studio Installer → Individual Components → Windows 10 SDK). d2d1.lib ships with the SDK. |
 
 | Symptom | Cause / Fix |
 | ------- | ----------- |

@@ -35,8 +35,12 @@ struct Config {
 
     // Absolute frame number (0-based, counting from the first Present after DLL
     // load) on which to capture all draws and write OBJ files. UINT64_MAX
-    // means disabled. Stage 4 replaces this with the F10 hotkey mechanism.
+    // means disabled.
     std::uint64_t capture_frame = std::numeric_limits<std::uint64_t>::max();
+
+    // Number of consecutive frames to capture per trigger (hotkey or
+    // capture_frame). 1 = single-frame rip; N > 1 = time-freeze burst.
+    std::uint32_t freeze_frames = 1;
 
     // Parse a simple `key=value` file. `#` starts a comment. Missing keys
     // retain their defaults; unknown keys are silently ignored (logged at

@@ -33,11 +33,17 @@ are runnable end-to-end against at least one real-world target.
 
 ## Stage 4 — UX
 
-* [ ] Global hotkey (default F10) registered from the injected DLL to
+* [x] Global hotkey (default F10) registered from the injected DLL to
       trigger a full-frame rip.
-* [ ] "Time freeze" mode that latches the next N frames and dumps them.
-* [ ] Output directory layout with per-session timestamps and manifest.
-* [ ] On-screen indicator (text overlay) confirming capture occurred.
+* [x] "Time freeze" mode (`freeze_frames=N`) that latches the next N frames
+      and dumps them per trigger.
+* [x] Output directory layout with per-session timestamps (`YYYYMMDD_HHMMSS/`)
+      and `session.json` manifest.
+* [x] On-screen indicator: D2D1 text overlay "CAPTURED — frame NNNNNN" for
+      ~2 s; window-title fallback for MSAA/HDR swap chains.
+* [ ] Stage 4.1 — `time_freeze_on_rip`: pause presentation during capture
+      (deferred — complex; requires blocking Present and unblocking on a
+      dedicated drain thread).
 
 ## Stage 5 — Additional backends
 

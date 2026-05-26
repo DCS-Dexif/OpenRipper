@@ -5,6 +5,8 @@ add_library(OpenRipper_d3d11 SHARED
     hooks_d3d11.cpp
     state_d3d11.cpp
     capture_d3d11.cpp
+    hotkey_d3d11.cpp
+    overlay_d3d11.cpp
 )
 
 target_link_libraries(OpenRipper_d3d11
@@ -13,6 +15,8 @@ target_link_libraries(OpenRipper_d3d11
             minhook
             d3d11
             dxgi
+            d2d1
+            dwrite
 )
 
 openripper_apply_common_flags(OpenRipper_d3d11)

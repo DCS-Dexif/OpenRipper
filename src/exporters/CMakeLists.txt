@@ -6,6 +6,7 @@ add_library(openripper_exporters STATIC
     dds_exporter.cpp
     png_exporter.cpp
     material_exporter.cpp
+    session_exporter.cpp
 )
 
 target_link_libraries(openripper_exporters

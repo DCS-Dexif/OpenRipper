@@ -159,6 +159,106 @@ deferred-context support are deferred to Stage 3.1.
 `DrawMaterialRecord` per draw during the capture frame and is flushed to
 `frame######_materials.json` at the next `Present` after the target frame.
 
+## Stage 4 UX pipeline
+
+### Hotkey thread
+
+A dedicated polling thread (`src/backends/d3d11/hotkey_d3d11.cpp`) runs inside
+the target process after hook installation:
+
+```
+hotkey_thread_proc (16 ms Sleep loop)
+    GetAsyncKeyState(VK_F10) edge-detect
+        rising edge ──► g_freeze_frames_remaining.store(g_freeze_count)
+                         (atomic write, picked up by hooked_present)
+```
+
+The thread is started after `install_hooks()` in `init_thread` and stopped
+(with `WaitForSingleObject`) inside `remove_hooks()` before `MH_Uninitialize`.
+
+### Freeze-counter state machine
+
+Both the config trigger and the hotkey converge on `g_freeze_frames_remaining`
+(atomic uint32, 0 = idle). `hooked_present` runs this state machine on every
+`Present` call:
+
+```
+Present(sc) ──► frame = fetch_add(1)
+
+ ① END-OF-FRAME (if capture active):
+      flush_frame(frame)          →  frame######_materials.json
+                                     +  session frame record
+      rem = freeze_remaining.fetch_sub(1) - 1
+      if rem == 0:
+          capture_active = false
+          overlay_notify(frame, draw_count)   ──► D2D1 / window-title
+      else:
+          reset draw counter (more frames)
+
+ ② ARM — config trigger:
+      if frame+1 == target && !active:
+          freeze_remaining = g_freeze_count
+          capture_active   = true
+
+ ③ ARM — hotkey:
+      if freeze_remaining > 0 && !active:
+          capture_active = true
+
+ ④ overlay_draw(sc, frame)        →  D2D1 text on back buffer
+
+ ⑤ g_real_present(sc, ...)
+```
+
+### D2D1 overlay
+
+`src/backends/d3d11/overlay_d3d11.cpp` renders a semi-transparent black
+rectangle + white text (`"CAPTURED — frame NNNNNN (M draws)"`) on the swap
+chain back buffer before `Present`. Lazy-initialized on the first `overlay_draw`
+call to avoid startup cost.
+
+```
+overlay_draw(sc, frame)
+    lazy_init:
+        D2D1CreateFactory → ID2D1Factory
+        DWriteCreateFactory → IDWriteFactory + IDWriteTextFormat (Arial 18pt Bold)
+        sc->GetBuffer(0, IDXGISurface) → CreateDxgiSurfaceRenderTarget
+        on failure: window-title fallback (SetWindowTextW)
+    if overlay_frames > 0:
+        BeginDraw → FillRectangle + DrawText → EndDraw
+        if EndDraw == D2DERR_RECREATE_TARGET: release RT (recreated next frame)
+    --overlay_frames
+```
+
+If the swap chain surface is incompatible with D2D1 (MSAA, HDR, non-BGRA/RGBA
+format), the overlay falls back to temporarily updating the window title, then
+restoring it after `overlay_frames` hits zero.
+
+### Session output layout
+
+At DLL init, a timestamp subdirectory is created under `output_dir`:
+
+```
+captures/
+└─ 20260526_003015/          ← YYYYMMDD_HHMMSS, one per DLL load
+   ├─ frame000120_draw00000.obj
+   ├─ frame000120_draw00000_ps_t0.png
+   ├─ frame000120_materials.json
+   └─ session.json
+```
+
+`session.json` is written once at `DLL_PROCESS_DETACH` by `remove_hooks()`:
+
+```json
+{
+  "session": "20260526_003015",
+  "target_exe": "d3d11_cube.exe",
+  "pid": 12345,
+  "frames_captured": [
+    { "frame": 120, "draws": 1, "manifest": "frame000120_materials.json" }
+  ]
+}
+```
+
 ## Anti-cheat & detection
 
 OpenRipper is **not** designed to evade anti-cheat. Hooking a process
