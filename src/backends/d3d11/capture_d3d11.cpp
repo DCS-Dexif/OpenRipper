@@ -171,10 +171,11 @@ bool readback_buffer(ID3D11Device*          device,
 
 // ---- Texture format helpers ------------------------------------------------
 
-// BC1_TYPELESS(70)..BC7_UNORM_SRGB(99) form a contiguous block in DXGI_FORMAT.
+// BC ranges in DXGI_FORMAT: BC1-BC5 = 70-84, BC6H-BC7 = 94-99.
+// 85-93 are non-BC B-channel formats (B5G6R5, B8G8R8A8, etc.) — not block-compressed.
 bool is_block_compressed(DXGI_FORMAT fmt) noexcept {
     const auto v = static_cast<std::uint32_t>(fmt);
-    return (v >= 70u && v <= 99u);
+    return (v >= 70u && v <= 84u) || (v >= 94u && v <= 99u);
 }
 
 // Bytes per 4x4 texel block for BC formats. BC1 and BC4 = 8 bytes; all others = 16.
