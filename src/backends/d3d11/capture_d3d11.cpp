@@ -169,6 +169,186 @@ bool readback_buffer(ID3D11Device*          device,
     return true;
 }
 
+// ---- Texture format helpers ------------------------------------------------
+
+// BC1_TYPELESS(70)..BC7_UNORM_SRGB(99) form a contiguous block in DXGI_FORMAT.
+bool is_block_compressed(DXGI_FORMAT fmt) noexcept {
+    const auto v = static_cast<std::uint32_t>(fmt);
+    return (v >= 70u && v <= 99u);
+}
+
+// Bytes per 4x4 texel block for BC formats. BC1 and BC4 = 8 bytes; all others = 16.
+std::uint32_t bc_bytes_per_block(DXGI_FORMAT fmt) noexcept {
+    switch (fmt) {
+    case DXGI_FORMAT_BC1_TYPELESS:
+    case DXGI_FORMAT_BC1_UNORM:
+    case DXGI_FORMAT_BC1_UNORM_SRGB:
+    case DXGI_FORMAT_BC4_TYPELESS:
+    case DXGI_FORMAT_BC4_UNORM:
+    case DXGI_FORMAT_BC4_SNORM:       return 8;
+    default:                           return 16;
+    }
+}
+
+// Bytes per pixel for common uncompressed DXGI formats. Returns 0 for unknown.
+std::uint32_t bytes_per_pixel_uncompressed(DXGI_FORMAT fmt) noexcept {
+    switch (fmt) {
+    case DXGI_FORMAT_R32G32B32A32_FLOAT:
+    case DXGI_FORMAT_R32G32B32A32_UINT:
+    case DXGI_FORMAT_R32G32B32A32_SINT:    return 16;
+    case DXGI_FORMAT_R32G32B32_FLOAT:
+    case DXGI_FORMAT_R32G32B32_UINT:
+    case DXGI_FORMAT_R32G32B32_SINT:       return 12;
+    case DXGI_FORMAT_R16G16B16A16_FLOAT:
+    case DXGI_FORMAT_R16G16B16A16_UNORM:
+    case DXGI_FORMAT_R16G16B16A16_UINT:
+    case DXGI_FORMAT_R16G16B16A16_SNORM:
+    case DXGI_FORMAT_R16G16B16A16_SINT:
+    case DXGI_FORMAT_R32G32_FLOAT:
+    case DXGI_FORMAT_R32G32_UINT:
+    case DXGI_FORMAT_R32G32_SINT:          return 8;
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case DXGI_FORMAT_R8G8B8A8_UINT:
+    case DXGI_FORMAT_R8G8B8A8_SNORM:
+    case DXGI_FORMAT_R8G8B8A8_SINT:
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case DXGI_FORMAT_B8G8R8X8_UNORM:
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+    case DXGI_FORMAT_R10G10B10A2_UINT:
+    case DXGI_FORMAT_R11G11B10_FLOAT:
+    case DXGI_FORMAT_R32_FLOAT:
+    case DXGI_FORMAT_R32_UINT:
+    case DXGI_FORMAT_R32_SINT:
+    case DXGI_FORMAT_D32_FLOAT:
+    case DXGI_FORMAT_D24_UNORM_S8_UINT:    return 4;
+    case DXGI_FORMAT_R16G16_FLOAT:
+    case DXGI_FORMAT_R16G16_UNORM:
+    case DXGI_FORMAT_R16G16_UINT:
+    case DXGI_FORMAT_R16G16_SNORM:
+    case DXGI_FORMAT_R16G16_SINT:
+    case DXGI_FORMAT_R16_FLOAT:
+    case DXGI_FORMAT_D16_UNORM:
+    case DXGI_FORMAT_R16_UNORM:
+    case DXGI_FORMAT_R16_UINT:
+    case DXGI_FORMAT_R16_SNORM:
+    case DXGI_FORMAT_R16_SINT:
+    case DXGI_FORMAT_R8G8_UNORM:
+    case DXGI_FORMAT_R8G8_UINT:
+    case DXGI_FORMAT_R8G8_SNORM:
+    case DXGI_FORMAT_R8G8_SINT:
+    case DXGI_FORMAT_B5G6R5_UNORM:
+    case DXGI_FORMAT_B5G5R5A1_UNORM:       return 2;
+    case DXGI_FORMAT_R8_UNORM:
+    case DXGI_FORMAT_R8_UINT:
+    case DXGI_FORMAT_R8_SNORM:
+    case DXGI_FORMAT_R8_SINT:
+    case DXGI_FORMAT_A8_UNORM:             return 1;
+    default:                                return 0;
+    }
+}
+
+// Tightly-packed bytes per logical row (no API RowPitch padding).
+std::uint32_t bytes_per_logical_row(DXGI_FORMAT fmt, UINT width) noexcept {
+    if (is_block_compressed(fmt))
+        return std::max(1u, (width + 3u) / 4u) * bc_bytes_per_block(fmt);
+    return width * bytes_per_pixel_uncompressed(fmt);
+}
+
+// Number of logical rows (for BC, one row of blocks covers 4 pixel rows).
+UINT logical_row_count(DXGI_FORMAT fmt, UINT height) noexcept {
+    if (is_block_compressed(fmt))
+        return std::max(1u, (height + 3u) / 4u);
+    return height;
+}
+
+// ---- GPU -> CPU texture copy -----------------------------------------------
+// Creates a staging mirror of a 2D texture, copies it, and reads back every
+// mip of array slice 0. The staging texture is released on return.
+// MSAA and unknown formats are skipped with a warning.
+bool readback_texture2d(ID3D11Device*               device,
+                        ID3D11DeviceContext*         ctx,
+                        ID3D11Texture2D*             src,
+                        openripper::TextureSnapshot& snap)
+{
+    D3D11_TEXTURE2D_DESC src_desc{};
+    src->GetDesc(&src_desc);
+
+    if (src_desc.SampleDesc.Count > 1) {
+        OR_LOG_WARN("capture_tex: MSAA texture ({} samples) - skipping (resolve not implemented)",
+                    src_desc.SampleDesc.Count);
+        return false;
+    }
+
+    const DXGI_FORMAT fmt = static_cast<DXGI_FORMAT>(src_desc.Format);
+    if (!is_block_compressed(fmt) && bytes_per_pixel_uncompressed(fmt) == 0) {
+        OR_LOG_WARN("capture_tex: unsupported/typeless format {} - skipping",
+                    static_cast<std::uint32_t>(fmt));
+        return false;
+    }
+
+    D3D11_TEXTURE2D_DESC stg_desc = src_desc;
+    stg_desc.Usage          = D3D11_USAGE_STAGING;
+    stg_desc.BindFlags      = 0;
+    stg_desc.MiscFlags      = 0;  // drop TEXTURECUBE / GENERATE_MIPS / shared flags
+    stg_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+    ComOwner<ID3D11Texture2D> staging;
+    if (FAILED(device->CreateTexture2D(&stg_desc, nullptr, staging.put()))) {
+        OR_LOG_WARN("capture_tex: CreateTexture2D(STAGING) failed (fmt={})",
+                    static_cast<std::uint32_t>(fmt));
+        return false;
+    }
+
+    ctx->CopyResource(staging.get(), src);
+
+    snap.subresources.reserve(src_desc.MipLevels);
+
+    for (UINT m = 0; m < src_desc.MipLevels; ++m) {
+        const UINT sub = D3D11CalcSubresource(m, 0, src_desc.MipLevels);
+
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (FAILED(ctx->Map(staging.get(), sub, D3D11_MAP_READ, 0, &mapped))) {
+            OR_LOG_WARN("capture_tex: Map(mip {}) failed - aborting readback", m);
+            ctx->Unmap(staging.get(), sub);
+            snap.subresources.clear();
+            return false;
+        }
+
+        const UINT mip_w     = std::max(1u, src_desc.Width  >> m);
+        const UINT mip_h     = std::max(1u, src_desc.Height >> m);
+        const UINT tight_row = bytes_per_logical_row(fmt, mip_w);
+        const UINT row_count = logical_row_count(fmt, mip_h);
+
+        openripper::TextureSubresource sub_out;
+        sub_out.mip_level = m;
+        sub_out.width     = mip_w;
+        sub_out.height    = mip_h;
+        sub_out.row_pitch = tight_row;
+        sub_out.pixels.resize(static_cast<std::size_t>(tight_row) * row_count);
+
+        const auto* src_row = static_cast<const std::byte*>(mapped.pData);
+        auto*       dst_row = sub_out.pixels.data();
+        for (UINT r = 0; r < row_count; ++r) {
+            std::memcpy(dst_row, src_row, tight_row);
+            src_row += mapped.RowPitch;
+            dst_row += tight_row;
+        }
+
+        ctx->Unmap(staging.get(), sub);
+        snap.subresources.push_back(std::move(sub_out));
+    }
+
+    snap.width         = src_desc.Width;
+    snap.height        = src_desc.Height;
+    snap.depth         = 1;  // ID3D11Texture2D is always depth=1
+    snap.mip_levels    = src_desc.MipLevels;
+    snap.array_size    = src_desc.ArraySize;
+    snap.native_format = static_cast<std::uint32_t>(src_desc.Format);
+    return true;
+}
+
 } // namespace (anonymous)
 
 // ---- Public entry point ---------------------------------------------------
@@ -328,6 +508,72 @@ std::optional<openripper::MeshSnapshot> capture_draw(ID3D11DeviceContext* ctx,
     OR_LOG_DEBUG("capture: draw {} - {} attrs, vcount={}, icount={}",
                  draw_id, elem_count, vertex_count, mesh.index_count);
     return mesh;
+}
+
+// ---- Texture capture entry point ------------------------------------------
+
+std::vector<std::pair<std::uint32_t, openripper::TextureSnapshot>>
+capture_pixel_textures(ID3D11DeviceContext* ctx,
+                       std::uint32_t        draw_id,
+                       std::uint32_t        frame_id)
+{
+    std::vector<std::pair<std::uint32_t, openripper::TextureSnapshot>> results;
+
+    if (ctx->GetType() == D3D11_DEVICE_CONTEXT_DEFERRED) {
+        static bool warned = false;
+        if (!warned) {
+            OR_LOG_WARN("capture_tex: deferred context - skipping (immediate context only)");
+            warned = true;
+        }
+        return results;
+    }
+
+    ComOwner<ID3D11Device> device;
+    ctx->GetDevice(device.put());
+    if (!device) return results;
+
+    // PSGetShaderResources AddRefs every non-null pointer; ComOwner releases them.
+    constexpr UINT k_slots = D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT; // 128
+    ID3D11ShaderResourceView* raw_srvs[k_slots]{};
+    ctx->PSGetShaderResources(0, k_slots, raw_srvs);
+
+    for (UINT slot = 0; slot < k_slots; ++slot) {
+        if (!raw_srvs[slot]) continue;
+        ComOwner<ID3D11ShaderResourceView> srv(raw_srvs[slot]);
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+        srv.get()->GetDesc(&srv_desc);
+
+        if (srv_desc.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D) {
+            OR_LOG_TRACE("capture_tex: draw {} slot {} dim={} - not Texture2D, skipping",
+                         draw_id, slot, static_cast<int>(srv_desc.ViewDimension));
+            continue;
+        }
+
+        ComOwner<ID3D11Resource> res;
+        srv.get()->GetResource(res.put());
+        if (!res) continue;
+
+        ComOwner<ID3D11Texture2D> tex2d;
+        res.get()->QueryInterface(__uuidof(ID3D11Texture2D),
+                                  reinterpret_cast<void**>(tex2d.put()));
+        if (!tex2d) continue;
+
+        openripper::TextureSnapshot snap;
+        snap.name = std::format("frame{:06}_draw{:05}_ps_t{}", frame_id, draw_id, slot);
+
+        if (!readback_texture2d(device.get(), ctx, tex2d.get(), snap)) {
+            OR_LOG_WARN("capture_tex: readback failed for draw {} slot {}", draw_id, slot);
+            continue;
+        }
+
+        OR_LOG_DEBUG("capture_tex: draw {} slot {} -> {}x{} dxgi={} mips={}",
+                     draw_id, slot,
+                     snap.width, snap.height, snap.native_format, snap.mip_levels);
+        results.emplace_back(slot, std::move(snap));
+    }
+
+    return results;
 }
 
 } // namespace openripper::backends::d3d11

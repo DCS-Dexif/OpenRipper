@@ -25,11 +25,11 @@ are runnable end-to-end against at least one real-world target.
 
 ## Stage 3 — Textures
 
-* [ ] Walk SRVs bound at draw time; dump the backing `ID3D11Texture2D` to
+* [x] Walk SRVs bound at draw time; dump the backing `ID3D11Texture2D` to
       DDS (preserving compressed formats: BC1-BC7) with PNG fallback for
-      uncompressed surfaces.
-* [ ] Material sidecar JSON cross-referencing textures to mesh draws.
-* [ ] Optional: cubemap and array slice expansion.
+      uncompressed surfaces. Full mipchain captured for array slice 0.
+* [x] Material sidecar JSON cross-referencing textures to mesh draws.
+* [ ] Optional: cubemap and array slice expansion (Stage 3.1 — deferred).
 
 ## Stage 4 — UX
 

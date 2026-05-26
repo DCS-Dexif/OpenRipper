@@ -95,6 +95,14 @@ struct MeshSnapshot {
 
 // ---- Texture ----------------------------------------------------------------
 
+struct TextureSubresource {
+    std::uint32_t           mip_level = 0;
+    std::uint32_t           width     = 0;   // dimension at this mip level
+    std::uint32_t           height    = 0;
+    std::uint32_t           row_pitch = 0;   // bytes per row, tightly packed (no API padding)
+    std::vector<std::byte>  pixels;
+};
+
 struct TextureSnapshot {
     std::string             name;
     std::uint32_t           width       = 0;
@@ -108,8 +116,9 @@ struct TextureSnapshot {
     // to decide between DDS and PNG output.
     std::uint32_t           native_format = 0;
 
-    // Top mip, slice 0 by default. Stage 3 will extend this to per-mip arrays.
-    std::vector<std::byte>  pixels;
+    // Mip chain for array slice 0. subresources[0] = top mip, [N-1] = smallest.
+    // Stage 3.1 will expand to per-slice for cubemap / texture array support.
+    std::vector<TextureSubresource> subresources;
 };
 
 } // namespace openripper

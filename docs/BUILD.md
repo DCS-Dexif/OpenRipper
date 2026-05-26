@@ -114,6 +114,51 @@ build\bin\OpenRipper.exe --pid 12345 --backend d3d11
 5. **Regression check — no config**: delete `OpenRipper.cfg` and relaunch.
    Log should show draw-count lines only, no capture activity, no crash.
 
+## Smoke test — Stage 3 texture capture
+
+Uses the same `OpenRipper.cfg` as the Stage 2 test. The test target must
+bind at least one PS texture SRV before the captured draw.
+
+1. **Config** (same as Stage 2):
+
+   ```ini
+   capture_frame=120
+   output_dir=captures
+   log_level=info
+   ```
+
+2. **Launch**:
+
+   ```bat
+   build\bin\OpenRipper.exe --target "C:\Path\To\YourGame.exe" --backend d3d11
+   ```
+
+3. **Expected additional output** (alongside the Stage 2 OBJ files):
+
+   ```
+   [INFO] png: wrote frame000120_draw00000_ps_t0.png (2x2, dxgi=87)
+   [INFO] material: wrote frame000120_materials.json (N draw records)
+   ```
+
+   Or for BC-compressed textures in a real game:
+
+   ```
+   [WARN] png: unsupported format 71 in '...' - caller should use DDS
+   [INFO] dds: wrote frame000120_draw00000_ps_t0.dds (1024x1024, 11 mips, dxgi=71)
+   ```
+
+4. **Verify outputs**:
+   - `captures/frame000120_materials.json` — valid JSON; open in any text editor.
+     `draws[0].ps_textures[0].file` must match the PNG/DDS filename on disk.
+   - `captures/frame000120_draw00000_ps_t0.png` — open in Windows Photos or Paint.
+     Should show the correct texture colour.
+   - For DDS files: open in Paint.NET (free DDS plugin) or run
+     `texconv -nologo frame000120_draw00000_ps_t0.dds` to inspect header.
+
+5. **Regression check — no textures bound**: run against a draw with no PS
+   SRVs. Log shows `ps_textures: []` (or 0 draw records with textures) in the
+   manifest; no `_ps_t*` files written; no crash.
+
 ## Common build problems
 
 | Symptom | Cause / Fix |

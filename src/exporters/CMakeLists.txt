@@ -3,10 +3,14 @@
 
 add_library(openripper_exporters STATIC
     obj_exporter.cpp
+    dds_exporter.cpp
+    png_exporter.cpp
+    material_exporter.cpp
 )
 
 target_link_libraries(openripper_exporters
-    PUBLIC openripper_core
+    PUBLIC  openripper_core
+    PRIVATE stb_image_write
 )
 
 openripper_apply_common_flags(openripper_exporters)

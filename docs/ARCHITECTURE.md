@@ -115,6 +115,50 @@ for command-list based renderers) is deferred to a future stage.
 by `hooked_present`. Stage 4 hotkey code will also write this flag; the flag
 is the only interface between the trigger source and the capture path.
 
+## Capture pipeline (Stage 3)
+
+Stage 3 extends the per-draw capture path to also snapshot the textures
+sampled by the pixel shader:
+
+```
+hooked_Draw* ──► try_capture()
+                    │
+                    ├─ capture_draw()    →  MeshSnapshot  →  write_obj()
+                    │
+                    └─ capture_pixel_textures()
+                            1. PSGetShaderResources(0, 128, srvs)
+                            2. For each non-null Texture2D SRV:
+                               a. GetResource() → QueryInterface(Texture2D)
+                               b. CreateTexture2D(STAGING) + CopyResource
+                               c. Map each mip of slice 0, memcpy row-by-row
+                                  stripping API RowPitch padding
+                               d. Unmap
+                            3. return vector<(slot, TextureSnapshot)>
+                    │
+                    ├─ write_png()  (R8G8B8A8/B8G8R8A8/R8 → PNG via stb)
+                    │  or write_dds()  (BC1-BC7 and other formats → DDS)
+                    │
+                    └─ accumulate DrawMaterialRecord
+                    │
+hooked_present (frame N) ──► write_material_manifest()
+                              captures/frame######_materials.json
+```
+
+**DDS vs PNG selection**: PNG exporter accepts only 8-bit RGBA/R formats
+(fast-failing otherwise); caller falls back to `write_dds()` which handles
+all DXGI formats via the DX10-extended header. Compressed formats
+(BC1-BC7) are written as DDS byte-for-byte, preserving the original GPU
+data without re-encoding.
+
+**Immediate context only (Stage 3)**: same constraint as Stage 2;
+`ctx->GetType() == D3D11_DEVICE_CONTEXT_DEFERRED` causes an early-out with
+a one-time warning. Cubemap / texture-array expansion and
+deferred-context support are deferred to Stage 3.1.
+
+**Per-frame manifest**: `g_pending_materials` accumulates one
+`DrawMaterialRecord` per draw during the capture frame and is flushed to
+`frame######_materials.json` at the next `Present` after the target frame.
+
 ## Anti-cheat & detection
 
 OpenRipper is **not** designed to evade anti-cheat. Hooking a process

@@ -43,6 +43,9 @@
 
 #include "core/logger.hpp"
 #include "exporters/obj_exporter.hpp"
+#include "exporters/dds_exporter.hpp"
+#include "exporters/png_exporter.hpp"
+#include "exporters/material_exporter.hpp"
 
 #include <windows.h>
 #include <d3d11.h>
@@ -53,8 +56,10 @@
 #include <atomic>
 #include <cstddef>
 #include <filesystem>
+#include <format>
 #include <limits>
 #include <mutex>
+#include <vector>
 
 namespace openripper::backends::d3d11 {
 namespace {
@@ -107,19 +112,23 @@ DrawIdxInstanced_t  g_real_draw_idx_inst       = nullptr;
 std::atomic<std::uint64_t> g_frame_counter{0};
 std::atomic<std::uint64_t> g_draws_this_frame{0};
 
-// ---- Capture state (Stage 2) ------------------------------------------------
+// ---- Capture state (Stage 2 / Stage 3) -------------------------------------
 // g_capture_active: set by hooked_present when it's time to capture.
 //   Stage 4 hotkey code will also write this (same interface, different writer).
 // g_capture_draw_idx: monotonic draw counter within the current capture frame.
+// g_pending_materials: accumulates per-draw records during a capture frame;
+//   flushed to a JSON manifest at end-of-frame in hooked_present.
 std::atomic<bool>          g_capture_active{false};
 std::atomic<std::uint32_t> g_capture_draw_idx{0};
+std::vector<exporters::DrawMaterialRecord> g_pending_materials;
 
 std::atomic<bool>  g_installed{false};
 std::mutex         g_install_mu;
 
 // ---- Helper: run capture for one draw call ----------------------------------
-// Calls capture_draw (GPU->CPU readback), then write_obj. Wrapped in try/catch
-// so a broken draw cannot crash the host.
+// Captures mesh + PS textures, writes OBJ/DDS/PNG, accumulates a material
+// record for the per-frame manifest. Wrapped in try/catch so a broken draw
+// cannot crash the host.
 void try_capture(ID3D11DeviceContext* ctx,
                  std::uint32_t index_count,
                  std::uint32_t vertex_count,
@@ -130,13 +139,49 @@ void try_capture(ID3D11DeviceContext* ctx,
     const auto frame_id = static_cast<std::uint32_t>(
                               g_frame_counter.load(std::memory_order_relaxed));
     try {
+        exporters::DrawMaterialRecord rec;
+        rec.draw_id = draw_id;
+
+        // ---- Mesh ----
         auto snap = capture_draw(ctx, index_count, vertex_count,
                                  start_index, base_vertex, draw_id, frame_id);
-        if (!snap) return;   // capture_draw already logged the reason
+        if (snap) {
+            const std::filesystem::path obj_out = g_output_dir / (snap->name + ".obj");
+            if (exporters::write_obj(*snap, obj_out)) {
+                OR_LOG_INFO("capture: wrote {}", obj_out.filename().string());
+                rec.mesh_file = obj_out.filename().string();
+            }
+        }
 
-        const std::filesystem::path out = g_output_dir / (snap->name + ".obj");
-        if (exporters::write_obj(*snap, out))
-            OR_LOG_INFO("capture: wrote {}", out.filename().string());
+        // ---- Textures ----
+        auto textures = capture_pixel_textures(ctx, draw_id, frame_id);
+        for (auto& [srv_slot, tex] : textures) {
+            bool written = false;
+            std::filesystem::path tex_path;
+
+            // Try PNG (fast-fail for unsupported/BC formats), fall back to DDS.
+            tex_path = g_output_dir / (tex.name + ".png");
+            if (exporters::write_png(tex, tex_path)) {
+                written = true;
+            } else {
+                tex_path = g_output_dir / (tex.name + ".dds");
+                written = exporters::write_dds(tex, tex_path);
+            }
+
+            if (written) {
+                exporters::DrawMaterialRecord::Tex t;
+                t.slot          = srv_slot;
+                t.file          = tex_path.filename().string();
+                t.native_format = tex.native_format;
+                t.width         = tex.width;
+                t.height        = tex.height;
+                t.mips          = tex.mip_levels;
+                rec.ps_textures.push_back(std::move(t));
+            }
+        }
+
+        g_pending_materials.push_back(std::move(rec));
+
     } catch (...) {
         OR_LOG_WARN("capture: exception in draw {} - skipping", draw_id);
     }
@@ -154,9 +199,18 @@ HRESULT STDMETHODCALLTYPE hooked_present(IDXGISwapChain* sc, UINT sync_interval,
     if ((frame % 60) == 0)
         OR_LOG_DEBUG("frame {} - {} draw calls in last frame", frame, draws);
 
-    // End of the capture frame → stop capturing.
+    // End of the capture frame → stop capturing, flush material manifest.
     if (g_capture_active.load(std::memory_order_relaxed) && frame == target) {
         g_capture_active.store(false, std::memory_order_release);
+
+        if (!g_pending_materials.empty()) {
+            const auto json_path = g_output_dir /
+                std::format("frame{:06}_materials.json", target);
+            exporters::write_material_manifest(
+                static_cast<std::uint32_t>(target), g_pending_materials, json_path);
+            g_pending_materials.clear();
+        }
+
         OR_LOG_INFO("capture: frame {:06} complete ({} draws written)",
                     target, g_capture_draw_idx.load(std::memory_order_relaxed));
     }
@@ -165,6 +219,7 @@ HRESULT STDMETHODCALLTYPE hooked_present(IDXGISwapChain* sc, UINT sync_interval,
     // Guard against UINT64_MAX (disabled) wrapping around to frame + 1 == 0.
     if (target != std::numeric_limits<std::uint64_t>::max() && frame + 1 == target) {
         g_capture_draw_idx.store(0, std::memory_order_relaxed);
+        g_pending_materials.clear();
         g_capture_active.store(true, std::memory_order_release);
         OR_LOG_INFO("capture: frame {:06} begin - capturing all draws", target);
     }
@@ -412,6 +467,7 @@ void remove_hooks() {
     MH_DisableHook(MH_ALL_HOOKS);
     MH_Uninitialize();
     forget_all_input_layouts();
+    g_pending_materials.clear();
     g_installed.store(false, std::memory_order_release);
     OR_LOG_INFO("D3D11 hooks removed.");
 }

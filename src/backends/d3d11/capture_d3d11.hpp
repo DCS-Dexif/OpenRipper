@@ -10,6 +10,8 @@
 #include <d3d11.h>
 #include <cstdint>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace openripper::backends::d3d11 {
 
@@ -38,5 +40,14 @@ std::optional<openripper::MeshSnapshot> capture_draw(ID3D11DeviceContext* ctx,
                                                 std::int32_t         base_vertex,
                                                 std::uint32_t        draw_id,
                                                 std::uint32_t        frame_id);
+
+// Walk all 128 PS SRV slots, stage each backing ID3D11Texture2D to CPU (full
+// mip chain, slice 0), and return the results paired with their SRV slot index.
+// Only D3D11_SRV_DIMENSION_TEXTURE2D views are captured; others are skipped.
+// Returns an empty vector when the context is deferred or no textures are found.
+std::vector<std::pair<std::uint32_t, openripper::TextureSnapshot>>
+capture_pixel_textures(ID3D11DeviceContext* ctx,
+                       std::uint32_t        draw_id,
+                       std::uint32_t        frame_id);
 
 } // namespace openripper::backends::d3d11
