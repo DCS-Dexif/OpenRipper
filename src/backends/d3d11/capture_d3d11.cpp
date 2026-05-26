@@ -357,8 +357,8 @@ bool readback_texture2d(ID3D11Device*               device,
 std::optional<openripper::MeshSnapshot> capture_draw(ID3D11DeviceContext* ctx,
                                                 std::uint32_t        index_count,
                                                 std::uint32_t        vertex_count,
-                                                std::uint32_t        /*start_index*/,
-                                                std::int32_t         /*base_vertex*/,
+                                                std::uint32_t        start_index,
+                                                std::int32_t         base_vertex,
                                                 std::uint32_t        draw_id,
                                                 std::uint32_t        frame_id)
 {
@@ -481,8 +481,16 @@ std::optional<openripper::MeshSnapshot> capture_draw(ID3D11DeviceContext* ctx,
     mesh.vertex_streams.resize(slot_count);
     for (UINT s = 0; s < slot_count; ++s) {
         if (!vb.ptrs[s]) continue;   // slot not bound
-        if (!readback_buffer(device.get(), ctx, vb.ptrs[s], mesh.vertex_streams[s]))
+        if (!readback_buffer(device.get(), ctx, vb.ptrs[s], mesh.vertex_streams[s])) {
             OR_LOG_WARN("capture: VB slot {} readback failed in draw {}", s, draw_id);
+            continue;
+        }
+        // Slice by IASetVertexBuffers offset so vertex row 0 = first vertex of draw.
+        if (vb.offsets[s] > 0 && vb.offsets[s] < mesh.vertex_streams[s].size()) {
+            mesh.vertex_streams[s].erase(
+                mesh.vertex_streams[s].begin(),
+                mesh.vertex_streams[s].begin() + vb.offsets[s]);
+        }
     }
 
     // ---- GPU -> CPU: index buffer -----------------------------------------
@@ -504,7 +512,9 @@ std::optional<openripper::MeshSnapshot> capture_draw(ID3D11DeviceContext* ctx,
         mesh.index_count  = 0;
     }
 
-    mesh.vertex_count = vertex_count;  // draw-call argument; whole VB was captured
+    mesh.vertex_count = vertex_count;
+    mesh.start_index  = start_index;
+    mesh.base_vertex  = base_vertex;
 
     OR_LOG_DEBUG("capture: draw {} - {} attrs, vcount={}, icount={}",
                  draw_id, elem_count, vertex_count, mesh.index_count);

@@ -88,6 +88,13 @@ struct MeshSnapshot {
     std::uint32_t                        vertex_count = 0;
     std::uint32_t                        index_count  = 0;
 
+    // Draw-call addressing parameters needed for correct IB/VB slicing.
+    // start_index: first index in index_buffer belonging to this draw.
+    // base_vertex: added to every raw index to get the VB row.
+    // (VB byte offsets are sliced out of vertex_streams at capture time.)
+    std::uint32_t                        start_index  = 0;
+    std::int32_t                         base_vertex  = 0;
+
     // Correlation metadata - useful for filenames and manifest sidecars.
     std::uint32_t                        draw_id  = 0;
     std::uint32_t                        frame_id = 0;

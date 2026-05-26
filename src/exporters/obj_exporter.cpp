@@ -253,14 +253,33 @@ bool write_obj(const MeshSnapshot& mesh, const std::filesystem::path& out_path) 
         emit_face_vertex(c); f << '\n';
     };
 
+    // Emit faces applying start_index (IB slice) and base_vertex (VB row offset).
+    // raw_index + base_vertex gives the 0-based VB row (after VB offset slicing).
+    // Skip any face whose resolved vertex index falls outside the captured stream.
+    auto resolve = [&](std::uint32_t raw) -> std::int64_t {
+        return static_cast<std::int64_t>(raw) + mesh.base_vertex;
+    };
+    auto in_range = [&](std::int64_t v) {
+        return v >= 0 && static_cast<std::size_t>(v) < vcount;
+    };
+    auto emit_indexed_triangle = [&](std::uint32_t ra, std::uint32_t rb, std::uint32_t rc) {
+        const auto a = resolve(ra), b = resolve(rb), c = resolve(rc);
+        if (!in_range(a) || !in_range(b) || !in_range(c)) return;
+        emit_triangle(static_cast<std::uint32_t>(a),
+                      static_cast<std::uint32_t>(b),
+                      static_cast<std::uint32_t>(c));
+    };
+
     if (mesh.index_format == IndexFormat::U16) {
-        const auto* idx = reinterpret_cast<const std::uint16_t*>(mesh.index_buffer.data());
+        const auto* base = reinterpret_cast<const std::uint16_t*>(mesh.index_buffer.data());
+        const auto* idx  = base + mesh.start_index;
         for (std::uint32_t i = 0; i + 2 < mesh.index_count; i += 3)
-            emit_triangle(idx[i], idx[i + 1], idx[i + 2]);
+            emit_indexed_triangle(idx[i], idx[i + 1], idx[i + 2]);
     } else if (mesh.index_format == IndexFormat::U32) {
-        const auto* idx = reinterpret_cast<const std::uint32_t*>(mesh.index_buffer.data());
+        const auto* base = reinterpret_cast<const std::uint32_t*>(mesh.index_buffer.data());
+        const auto* idx  = base + mesh.start_index;
         for (std::uint32_t i = 0; i + 2 < mesh.index_count; i += 3)
-            emit_triangle(idx[i], idx[i + 1], idx[i + 2]);
+            emit_indexed_triangle(idx[i], idx[i + 1], idx[i + 2]);
     } else {
         // Non-indexed: consecutive vertices form triangles.
         const auto n = static_cast<std::uint32_t>(vcount);
