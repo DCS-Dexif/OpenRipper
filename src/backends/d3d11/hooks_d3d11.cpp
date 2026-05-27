@@ -41,9 +41,9 @@
 #include "capture_d3d11.hpp"
 #include "state_d3d11.hpp"
 #include "runtime_state.hpp"
-#include "hotkey_d3d11.hpp"
 #include "overlay_d3d11.hpp"
 
+#include "core/hotkey.hpp"
 #include "core/logger.hpp"
 #include "exporters/obj_exporter.hpp"
 #include "exporters/dds_exporter.hpp"
@@ -54,6 +54,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <dxgi1_2.h>
 
 #include <MinHook.h>
 
@@ -70,6 +71,7 @@ namespace {
 
 // ---- vtable indices ---------------------------------------------------------
 constexpr std::size_t k_vt_present              = 8;
+constexpr std::size_t k_vt_present1             = 22; // IDXGISwapChain1 (flip-model games)
 constexpr std::size_t k_vt_create_input_layout  = 11;
 constexpr std::size_t k_vt_draw_indexed         = 12;
 constexpr std::size_t k_vt_draw                 = 13;
@@ -78,6 +80,7 @@ constexpr std::size_t k_vt_draw_instanced       = 21;
 
 // ---- Function pointer types -------------------------------------------------
 using Present_t              = HRESULT (STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
+using Present1_t             = HRESULT (STDMETHODCALLTYPE*)(IDXGISwapChain1*, UINT, UINT, const DXGI_PRESENT_PARAMETERS*);
 using CreateInputLayout_t    = HRESULT (STDMETHODCALLTYPE*)(ID3D11Device*,
                                    const D3D11_INPUT_ELEMENT_DESC*, UINT,
                                    const void*, SIZE_T, ID3D11InputLayout**);
@@ -88,6 +91,7 @@ using DrawIdxInstanced_t     = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*, U
 
 // MinHook trampolines.
 Present_t           g_real_present             = nullptr;
+Present1_t          g_real_present1            = nullptr;
 CreateInputLayout_t g_real_create_input_layout = nullptr;
 Draw_t              g_real_draw                = nullptr;
 DrawIndexed_t       g_real_draw_indexed        = nullptr;
@@ -128,7 +132,7 @@ void try_capture(ID3D11DeviceContext* ctx,
                                  start_index, base_vertex, draw_id, frame_id);
         if (snap) {
             const std::filesystem::path obj_out = g_output_dir / (snap->name + ".obj");
-            if (exporters::write_obj(*snap, obj_out)) {
+            if (exporters::write_obj(*snap, obj_out, g_flip_winding)) {
                 OR_LOG_INFO("capture: wrote {}", obj_out.filename().string());
                 rec.mesh_file = obj_out.filename().string();
             }
@@ -192,7 +196,9 @@ std::uint32_t flush_frame(std::uint64_t frame) {
 
 // ---- Hook bodies ------------------------------------------------------------
 
-HRESULT STDMETHODCALLTYPE hooked_present(IDXGISwapChain* sc, UINT sync_interval, UINT flags) {
+// Shared state machine for both Present and Present1.
+// Returns true if the caller should suppress the real Present (time_freeze_on_rip).
+bool present_shared(IDXGISwapChain* sc) {
     const auto frame  = g_frame_counter.fetch_add(1, std::memory_order_relaxed);
     const auto draws  = g_draws_this_frame.exchange(0, std::memory_order_relaxed);
     const auto target = g_capture_frame_target.load(std::memory_order_relaxed);
@@ -238,9 +244,19 @@ HRESULT STDMETHODCALLTYPE hooked_present(IDXGISwapChain* sc, UINT sync_interval,
                     frame + 1, g_freeze_frames_remaining.load(std::memory_order_relaxed));
     }
 
-    // === 4. Overlay + Present ===
     overlay_draw(sc, frame);
+    return g_capture_active.load(std::memory_order_relaxed) && g_time_freeze_on_rip;
+}
+
+HRESULT STDMETHODCALLTYPE hooked_present(IDXGISwapChain* sc, UINT sync_interval, UINT flags) {
+    if (present_shared(sc)) return S_OK;
     return g_real_present(sc, sync_interval, flags);
+}
+
+HRESULT STDMETHODCALLTYPE hooked_present1(IDXGISwapChain1* sc, UINT sync_interval, UINT flags,
+                                           const DXGI_PRESENT_PARAMETERS* pp) {
+    if (present_shared(sc)) return S_OK;
+    return g_real_present1(sc, sync_interval, flags, pp);
 }
 
 HRESULT STDMETHODCALLTYPE hooked_create_input_layout(
@@ -305,6 +321,7 @@ void STDMETHODCALLTYPE hooked_draw_idx_instanced(ID3D11DeviceContext* ctx,
 
 struct VTableAddrs {
     void* present              = nullptr;
+    void* present1             = nullptr; // IDXGISwapChain1 (nullptr if not supported)
     void* create_input_layout  = nullptr;
     void* draw                 = nullptr;
     void* draw_indexed         = nullptr;
@@ -381,6 +398,16 @@ bool acquire_vtable_addrs(VTableAddrs& out) {
     out.draw_instanced      = vt_ctx[k_vt_draw_instanced];
     out.draw_idx_inst       = vt_ctx[k_vt_draw_indexed_inst];
 
+    // IDXGISwapChain1::Present1 — available on DXGI 1.2+ (Win 8+).
+    IDXGISwapChain1* sc1 = nullptr;
+    if (SUCCEEDED(sc->QueryInterface(IID_PPV_ARGS(&sc1)))) {
+        void** vt_sc1 = *reinterpret_cast<void***>(sc1);
+        out.present1 = vt_sc1[k_vt_present1];
+        sc1->Release();
+    } else {
+        OR_LOG_WARN("vtable-scan: IDXGISwapChain1 QI failed - Present1 hook skipped");
+    }
+
     sc->Release();
     ctx->Release();
     dev->Release();
@@ -427,6 +454,11 @@ bool install_hooks() {
                           reinterpret_cast<void*>(&hooked_present),
                           reinterpret_cast<void**>(&g_real_present),
                           "Present");
+    if (addrs.present1)
+        ok &= create_one_hook(addrs.present1,
+                              reinterpret_cast<void*>(&hooked_present1),
+                              reinterpret_cast<void**>(&g_real_present1),
+                              "Present1");
     ok &= create_one_hook(addrs.create_input_layout,
                           reinterpret_cast<void*>(&hooked_create_input_layout),
                           reinterpret_cast<void**>(&g_real_create_input_layout),
@@ -457,7 +489,8 @@ bool install_hooks() {
     }
 
     g_installed.store(true, std::memory_order_release);
-    OR_LOG_INFO("D3D11 hooks installed (Present + CreateInputLayout + 4 Draw variants).");
+    OR_LOG_INFO("D3D11 hooks installed (Present{} + CreateInputLayout + 4 Draw variants).",
+                addrs.present1 ? "+Present1" : "");
     return true;
 }
 
@@ -465,7 +498,7 @@ void remove_hooks() {
     std::lock_guard lk(g_install_mu);
     if (!g_installed.load(std::memory_order_relaxed)) return;
 
-    stop_hotkey_thread();
+    openripper::stop_hotkey_thread();
     overlay_shutdown();
 
     if (!g_session_frames.empty()) {

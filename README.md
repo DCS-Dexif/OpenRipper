@@ -13,20 +13,21 @@ education**.
 
 ## Status
 
-Pre-alpha. Stage 1 (foundation) lands the build system, CLI launcher,
-DLL-injection runtime, and a D3D11 backend that hooks `Present` / `Draw*`
-and logs per-frame draw counts. Actual vertex / texture capture comes in
-later stages — see [docs/ROADMAP.md](docs/ROADMAP.md).
+Pre-alpha, Stage 5. Stages 1–4 are complete: build system, DLL injection,
+D3D11 full capture pipeline (vertex/index, textures, materials, hotkey, overlay,
+session output). Stage 5 ships the **D3D12** and **D3D9** backends.
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full staged plan.
 
 ## Backends
 
-| API          | Status         |
-| ------------ | -------------- |
-| Direct3D 11  | scaffolding    |
-| Direct3D 12  | planned        |
-| Direct3D 9   | planned        |
-| OpenGL 3.3+  | planned        |
-| Vulkan 1.x   | planned        |
+| API          | Status    |
+| ------------ | --------- |
+| Direct3D 11  | complete  |
+| Direct3D 12  | complete  |
+| Direct3D 9   | complete  |
+| OpenGL 3.3+  | planned   |
+| Vulkan 1.x   | planned   |
 
 ## Quick build (Windows / MSVC)
 
@@ -39,31 +40,40 @@ The build pulls [MinHook](https://github.com/TsudaKageyu/minhook) automatically
 via CMake `FetchContent`. No vcpkg/conan setup is required for the default
 configuration.
 
-Artifacts land under `build/bin/`:
+Artifacts land under `build/bin/Release/`:
 
 * `OpenRipper.exe`       — CLI launcher / injector
-* `OpenRipper_d3d11.dll` — D3D11 capture backend (loaded into target processes)
+* `OpenRipper_d3d11.dll` — D3D11 capture backend
+* `OpenRipper_d3d12.dll` — D3D12 capture backend
+* `OpenRipper_d3d9.dll`  — D3D9 capture backend
 
 Full instructions: [docs/BUILD.md](docs/BUILD.md).
 
-## Smoke test
+## Quick capture
 
 ```bat
-build\bin\OpenRipper.exe --target "C:\Path\To\YourGame.exe" --backend d3d11
+build\bin\Release\OpenRipper.exe --target "C:\Path\To\YourGame.exe" --backend d3d11
 ```
 
-If injection succeeds you'll see `OpenRipper.log` appear next to the target
-executable, with lines such as:
+Launch the game through OpenRipper (or attach by PID with `--pid`), then press
+**F10** to trigger a rip. Assets appear in `captures/<timestamp>/` next to the
+game EXE:
 
 ```
-2026-05-21 14:02:11.043 [INFO ] OpenRipper_d3d11.dll loaded into host: YourGame.exe
-2026-05-21 14:02:11.180 [INFO ] D3D11 hooks installed (Present + 4 Draw variants).
-2026-05-21 14:02:11.512 [DEBUG] frame 60 - 1834 draw calls (avg over recent frame)
+captures/20260521_140211/
+  frame000120_draw00000.obj
+  frame000120_draw00000_ps_t0.dds
+  frame000120_materials.json
+  session.json
 ```
+
+The overlay flashes **"CAPTURED — frame NNNNNN"** on-screen for ~2 seconds
+after each successful rip. See [docs/BUILD.md](docs/BUILD.md) for full config
+reference (`OpenRipper.cfg`).
 
 ## Documentation
 
-* [docs/BUILD.md](docs/BUILD.md) — build requirements and CMake options.
+* [docs/BUILD.md](docs/BUILD.md) — build requirements, CMake options, and config reference.
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module layout and hooking strategy.
 * [docs/ROADMAP.md](docs/ROADMAP.md) — staged feature plan.
 
@@ -74,6 +84,6 @@ derivative work must remain free, so the tool cannot be re-paywalled.
 
 ## Contributing
 
-The project is in its earliest scaffolding stage; expect rough edges. Issues
-and PRs are welcome once the Stage 1 base is in. Please keep contributions
-focused on archival / preservation / interoperability use cases.
+The project is in active development through Stage 5. Issues and PRs are
+welcome. Please keep contributions focused on archival / preservation /
+interoperability use cases and free-software principles.

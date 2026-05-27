@@ -33,6 +33,13 @@ inline std::atomic<std::uint32_t> g_freeze_frames_remaining{0};
 // Set once by init_thread before hooks are installed; read-only after that.
 inline std::uint32_t g_freeze_count{1};
 
+// If true, hooked_present skips calling the real Present during active capture
+// frames so the display freezes. Set once by init_thread from Config.
+inline bool g_time_freeze_on_rip{false};
+
+// If true, OBJ face winding is reversed on export. Set once by init_thread.
+inline bool g_flip_winding{false};
+
 // Session identifier (timestamp string, e.g. "20260525_232408").
 // Written once by init_thread; used in session manifest.
 inline std::string g_session_id;

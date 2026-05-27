@@ -5,7 +5,6 @@ add_library(OpenRipper_d3d11 SHARED
     hooks_d3d11.cpp
     state_d3d11.cpp
     capture_d3d11.cpp
-    hotkey_d3d11.cpp
     overlay_d3d11.cpp
 )
 

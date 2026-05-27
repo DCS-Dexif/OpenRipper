@@ -4,6 +4,7 @@
 add_library(openripper_core STATIC
     logger.cpp
     config.cpp
+    hotkey.cpp
 )
 
 # Allow all OpenRipper modules to include "core/..." headers verbatim.

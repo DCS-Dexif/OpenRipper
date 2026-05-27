@@ -43,18 +43,21 @@ are runnable end-to-end against at least one real-world target.
       ~2 s. Two-mode rendering: direct (game device has BGRA support) or
       indirect via a helper BGRA device + CPU stamp (games that lack BGRA,
       e.g. most DX11 titles). Window-title fallback if both D2D1 paths fail.
-* [ ] Stage 4.1 — `time_freeze_on_rip`: pause presentation during capture
-      (deferred — complex; requires blocking Present and unblocking on a
-      dedicated drain thread).
-* [ ] Stage 4.2 — `flip_winding=true` config option: reverse OBJ face winding
-      order on export (for engines that use CW front-face convention, where
-      imported meshes appear inside-out in Blender/Maya).
+* [x] Stage 4.1 — `time_freeze_on_rip`: when true, hooked_present skips the
+      real Present call during active capture frames so the display freezes.
+* [x] Stage 4.2 — `flip_winding=true` config option: reverse OBJ face winding
+      order on export (for engines that use CW front-face convention).
 
 ## Stage 5 — Additional backends
 
-* [ ] D3D12 backend (PIX-style command-list capture; resource state tracking).
-* [ ] D3D9 backend (vtable hook on `IDirect3DDevice9::DrawIndexedPrimitive`
-      and `DrawPrimitive`).
+* [x] D3D12 backend: vtable hooks on `IDXGISwapChain::Present`,
+      `ID3D12GraphicsCommandList::DrawInstanced/DrawIndexedInstanced` and
+      supporting state-tracking hooks (IASetVertexBuffers, IASetIndexBuffer,
+      SetPipelineState, SetDescriptorHeaps, ExecuteCommandLists, etc.).
+      Two-phase capture: UPLOAD-heap draws copied immediately; DEFAULT-heap
+      resources fence-drained + readback at Present. D3D11On12 overlay.
+* [x] D3D9 backend (vtable hook on `IDirect3DDevice9::DrawIndexedPrimitive`,
+      `DrawPrimitive`, and UP variants; FVF + vertex-declaration decoding).
 * [ ] OpenGL backend (proxy `opengl32.dll` or WGL hook).
 * [ ] Vulkan backend (implicit layer manifest).
 

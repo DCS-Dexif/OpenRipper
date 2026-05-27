@@ -9,10 +9,10 @@
 // hook installation once the loader has released its lock.
 
 #include "hooks_d3d11.hpp"
-#include "hotkey_d3d11.hpp"
 #include "runtime_state.hpp"
 
 #include "core/config.hpp"
+#include "core/hotkey.hpp"
 #include "core/logger.hpp"
 
 #include <windows.h>
@@ -50,15 +50,14 @@ DWORD WINAPI init_thread(LPVOID) {
         OR_LOG_INFO("no OpenRipper.cfg found - using defaults (capture disabled)");
     }
 
-    if (cfg.time_freeze_on_rip)
-        OR_LOG_WARN("time_freeze_on_rip: presentation-pause not yet implemented — ignored");
-
     openripper::Logger::set_level(cfg.log_level);
 
     // ---- Runtime state ------------------------------------------------------
     openripper::backends::d3d11::g_capture_frame_target.store(
         cfg.capture_frame, std::memory_order_relaxed);
-    openripper::backends::d3d11::g_freeze_count = (cfg.freeze_frames > 0) ? cfg.freeze_frames : 1;
+    openripper::backends::d3d11::g_freeze_count         = (cfg.freeze_frames > 0) ? cfg.freeze_frames : 1;
+    openripper::backends::d3d11::g_time_freeze_on_rip   = cfg.time_freeze_on_rip;
+    openripper::backends::d3d11::g_flip_winding         = cfg.flip_winding;
 
     // ---- Session output directory (always created — hotkey can trigger at any time) ---
     const auto out = cfg.output_dir.is_absolute()
@@ -102,7 +101,9 @@ DWORD WINAPI init_thread(LPVOID) {
     openripper::backends::d3d11::activate_capture_if_frame_zero();
 
     // ---- Hotkey thread ------------------------------------------------------
-    openripper::backends::d3d11::start_hotkey_thread(cfg.rip_hotkey);
+    openripper::start_hotkey_thread(cfg.rip_hotkey,
+        openripper::backends::d3d11::g_freeze_frames_remaining,
+        openripper::backends::d3d11::g_freeze_count);
 
     return 0;
 }

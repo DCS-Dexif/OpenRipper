@@ -30,10 +30,12 @@ cmake -S . -B build -A x64
 cmake --build build --config Release -j
 ```
 
-Artifacts land under `build/bin/`:
+Artifacts land under `build/bin/Release/`:
 
 * `OpenRipper.exe`       — out-of-process launcher / injector.
 * `OpenRipper_d3d11.dll` — D3D11 capture backend (loaded into the target).
+* `OpenRipper_d3d12.dll` — D3D12 capture backend.
+* `OpenRipper_d3d9.dll`  — D3D9 capture backend.
 
 ## Build options
 
@@ -43,8 +45,8 @@ configure time:
 | Option                       | Default | Purpose |
 | ---------------------------- | ------- | ------- |
 | `OPENRIPPER_BUILD_D3D11`     | ON      | D3D11 capture backend. |
-| `OPENRIPPER_BUILD_D3D12`     | OFF     | D3D12 backend (not yet implemented). |
-| `OPENRIPPER_BUILD_D3D9`      | OFF     | D3D9 backend (not yet implemented). |
+| `OPENRIPPER_BUILD_D3D12`     | ON      | D3D12 capture backend (Stage 5). |
+| `OPENRIPPER_BUILD_D3D9`      | ON      | D3D9 capture backend. |
 | `OPENRIPPER_BUILD_OPENGL`    | OFF     | OpenGL backend (not yet implemented). |
 | `OPENRIPPER_BUILD_VULKAN`    | OFF     | Vulkan backend (not yet implemented). |
 | `OPENRIPPER_BUILD_CLI`       | ON      | Command-line launcher. |
@@ -60,15 +62,29 @@ cmake -S . -B build -A x64 -DOPENRIPPER_BUILD_GUI=OFF -DOPENRIPPER_BUILD_TESTS=O
 ## Running (smoke test)
 
 ```bat
-build\bin\OpenRipper.exe --target "C:\Path\To\YourGame.exe" --backend d3d11
+build\bin\Release\OpenRipper.exe --target "C:\Path\To\YourGame.exe" --backend d3d11
 ```
 
-The CLI launches the target suspended, injects `OpenRipper_d3d11.dll`, and
-resumes execution. The backend writes to `OpenRipper.log` next to the host
-executable. To attach to an already-running process:
+The CLI launches the target suspended, injects the backend DLL, and resumes
+execution. The backend writes to `OpenRipper.log` next to the host executable.
+
+Select the right backend for the game's API:
 
 ```bat
-build\bin\OpenRipper.exe --pid 12345 --backend d3d11
+# Direct3D 11 (most PC titles 2009–present)
+build\bin\Release\OpenRipper.exe --target "Game.exe" --backend d3d11
+
+# Direct3D 12 (modern DX12 titles)
+build\bin\Release\OpenRipper.exe --target "Game.exe" --backend d3d12
+
+# Direct3D 9 (older titles, many emulators)
+build\bin\Release\OpenRipper.exe --target "Game.exe" --backend d3d9
+```
+
+To attach to an already-running process:
+
+```bat
+build\bin\Release\OpenRipper.exe --pid 12345 --backend d3d11
 ```
 
 ## Config reference (`OpenRipper.cfg`)
@@ -85,7 +101,8 @@ keys are silently ignored (logged at `trace` level).
 | `rip_hotkey` | `0x79` | Virtual-key code (VK_*) for the in-game rip hotkey. `0x79` = F10. Accepts hex (`0x79`) or decimal (`121`). `0` disables the hotkey. |
 | `capture_frame` | *(disabled)* | 0-based frame index (counting from the first `Present` after DLL load) on which to auto-trigger a capture. Omit or leave unset to use hotkey-only. |
 | `freeze_frames` | `1` | Number of consecutive frames to capture per trigger. `1` = single frame; `N` = burst of N frames (output named `frame######_*` per frame). |
-| `time_freeze_on_rip` | `false` | *(not yet implemented — deferred to Stage 4.1)* |
+| `time_freeze_on_rip` | `false` | When `true`, the backend skips calling the real `Present` during active capture frames so the display holds on the last pre-capture frame. The game's render thread continues submitting draw calls (which are captured), but no new frame appears until capture finishes. |
+| `flip_winding` | `false` | When `true`, reverses OBJ face winding order on export (`a,b,c` → `a,c,b`). Use for engines that expect CW front-face convention, where imported meshes appear inside-out in Blender/Maya without this flag. |
 
 **Example — hotkey-only, 2-frame burst, debug logging:**
 
@@ -121,7 +138,7 @@ log_level=info
 2. **Launch**:
 
    ```bat
-   build\bin\OpenRipper.exe --target "C:\Path\To\YourGame.exe" --backend d3d11
+   build\bin\Release\OpenRipper.exe --target "C:\Path\To\YourGame.exe" --backend d3d11
    ```
 
 3. **Expected log output** (in `OpenRipper.log` next to the EXE):
@@ -163,7 +180,7 @@ bind at least one PS texture SRV before the captured draw.
 2. **Launch**:
 
    ```bat
-   build\bin\OpenRipper.exe --target "C:\Path\To\YourGame.exe" --backend d3d11
+   build\bin\Release\OpenRipper.exe --target "C:\Path\To\YourGame.exe" --backend d3d11
    ```
 
 3. **Expected additional output** (alongside the Stage 2 OBJ files):

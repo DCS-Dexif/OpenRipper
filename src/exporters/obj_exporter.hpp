@@ -19,7 +19,11 @@ namespace openripper::exporters {
 // Normals (vn) and UVs (vt) are emitted when the snapshot contains
 // VertexSemantic::Normal and VertexSemantic::TexCoord attributes respectively.
 // Face lines use the v/vt/vn form, omitting whichever channels are absent.
+//
+// flip_winding: when true, reverses face winding (a,b,c → a,c,b) for engines
+// that use CW front-face convention.
 bool write_obj(const MeshSnapshot& mesh,
-               const std::filesystem::path& out_path);
+               const std::filesystem::path& out_path,
+               bool flip_winding = false);
 
 } // namespace openripper::exporters

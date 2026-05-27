@@ -8,9 +8,9 @@ DLL loaded into the target process.
 ```
 +--------------------------+        +------------------------------+
 |  OpenRipper.exe (CLI)    |        | OpenRipper_d3d11.dll         |
-|  - parse args            |        | OpenRipper_d3d12.dll (plan.) |
-|  - launch target         |        | OpenRipper_vulkan.dll (plan.)|
-|  - inject backend DLL    |        |     ...                      |
+|  - parse args            |        | OpenRipper_d3d12.dll         |
+|  - launch target         |        | OpenRipper_d3d9.dll          |
+|  - inject backend DLL    |        | OpenRipper_vulkan.dll (plan.)|
 +------------+-------------+        | (loaded into game process)   |
              |                      +------------------------------+
              v                                    ^
@@ -26,7 +26,9 @@ DLL loaded into the target process.
 | `src/core/`           | Logger, config loader, common capture types. Header-friendly; static-linked into every backend and the CLI. |
 | `src/runtime/`        | Out-of-process helpers: process launching, DLL injection. |
 | `src/cli/`            | `OpenRipper.exe` — command-line front-end. |
-| `src/backends/<api>/` | One DLL per graphics API. Each backend installs hooks via MinHook and writes captured assets through the exporters. |
+| `src/backends/d3d11/` | D3D11 backend: hooks, state tracking, capture, overlay. |
+| `src/backends/d3d12/` | D3D12 backend: 15 vtable hooks, two-phase readback, D3D11On12 overlay. |
+| `src/backends/d3d9/`  | D3D9 backend: 5 vtable hooks, synchronous Lock capture. |
 | `src/exporters/`      | Format writers: OBJ, DDS, PNG, material JSON sidecar, session JSON. glTF planned (Stage 6). |
 | `src/gui/`            | (planned) Dear ImGui front-end. |
 | `tools/`              | (planned) standalone converters and Blender/Noesis importers. |
@@ -280,6 +282,85 @@ captures/
   ]
 }
 ```
+
+## Shared core (Stage 5 refactor)
+
+To serve all three backends consistently, logic previously inline in the D3D11
+backend was extracted into `src/core/`:
+
+* **`hotkey.hpp/cpp`** — a backend-agnostic polling thread (`GetAsyncKeyState`,
+  16 ms interval) that writes into any backend's `g_freeze_frames_remaining`
+  atomic on a rising key edge. All three backends call
+  `start_hotkey_thread()` / `stop_hotkey_thread()`.
+* **`config.hpp/cpp`** — `key=value` parser for `OpenRipper.cfg`. All config
+  keys (`output_dir`, `rip_hotkey`, `freeze_frames`, `time_freeze_on_rip`,
+  `flip_winding`, etc.) are shared.
+* **`types.hpp`** — `MeshSnapshot`, `TextureSnapshot`, `VertexAttribute`,
+  `IndexFormat`, `PrimitiveTopology`, etc. All backends produce these types;
+  all exporters consume them.
+* **`logger.hpp/cpp`** — zero-dependency, `std::format`-based logger shared by
+  every module.
+
+## D3D12 capture pipeline (Stage 5)
+
+The D3D12 backend hooks 15 vtable entries across `IDXGISwapChain`,
+`ID3D12GraphicsCommandList`, `ID3D12CommandQueue`, and `ID3D12Device`.
+
+**State tracking** is required because D3D12 is a command-list API — vertex and
+index buffer bindings, input layouts, and pipeline state are set on a command
+list ahead of the draw call. Four registries track this:
+
+| Registry | Hook that populates it | Consumed by |
+|---|---|---|
+| GPU VA map | `CreateCommittedResource`, `CreatePlacedResource` | Buffer readback |
+| PSO layout | `CreateGraphicsPipelineState` | Vertex decode |
+| SRV descriptor map | `CreateShaderResourceView` | Texture readback |
+| Per-CL state | `IASetVertexBuffers`, `SetPipelineState`, etc. | Both |
+
+**Two-phase capture:**
+
+1. *Draw time* — `DrawInstanced` / `DrawIndexedInstanced` hooks snapshot
+   per-CL state into a `DrawRecord`. UPLOAD-heap buffers are `Map`'d and copied
+   immediately. DEFAULT-heap resources are AddRef'd for deferred readback.
+2. *Present time* — `flush_frame()` fence-drains the game's command queue, then
+   issues a batch of `CopyBufferRegion` + `CopyTextureRegion` commands into a
+   dedicated readback command list. After a second fence wait, the data is
+   available on CPU.
+
+**Overlay:** `D3D11On12CreateDevice` bridges the game's `ID3D12Device` to a
+D3D11 device. Each `Present`, the current back buffer is wrapped per-frame
+(`GetCurrentBackBufferIndex` + `CreateWrappedResource`), D2D1 renders the text,
+and the wrapped resource is released back to the D3D12 queue. Falls back to
+window-title if D3D11On12 initialization fails.
+
+## D3D9 capture pipeline (Stage 5)
+
+D3D9 is a fully synchronous API: vertex and index buffer contents can be read at
+draw time via `Lock`/`Unlock` without a staging copy or readback fence.
+
+**Hooks (5 vtable entries):**
+
+| Hook | VTbl index | Purpose |
+|---|---|---|
+| `Present` | 17 | Frame counter, capture state machine, time_freeze_on_rip |
+| `DrawPrimitive` | 81 | Non-indexed draw capture |
+| `DrawIndexedPrimitive` | 82 | Indexed draw capture |
+| `DrawPrimitiveUP` | 83 | User-pointer non-indexed capture |
+| `DrawIndexedPrimitiveUP` | 84 | User-pointer indexed capture |
+
+**Vertex layout decoding:** The D3D9 backend prefers
+`IDirect3DVertexDeclaration9` (queried via `GetVertexDeclaration`) for
+structured layout information. When the game uses the legacy Fixed-Function
+Vertex (FVF) path, the backend decodes the FVF DWORD into semantic-tagged
+`VertexAttribute` records (position, normals, texture coordinates, diffuse,
+specular, blend weights). User-pointer draws receive an empty layout because no
+`IDirect3DVertexBuffer9` exists to query.
+
+**Texture capture:** Stages 0–7 are sampled via `GetTexture`. `IDirect3DTexture9`
+resources are Lock'd per mip level and written as PNG (preferred) or DDS.
+
+**Overlay:** D3D9 has no D2D1 interop path. The capture notification is a
+window-title flash (`SetWindowTextW`) only.
 
 ## Anti-cheat & detection
 

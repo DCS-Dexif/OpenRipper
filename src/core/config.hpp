@@ -33,6 +33,11 @@ struct Config {
     // capture work runs. If false, the rip happens asynchronously.
     bool time_freeze_on_rip = false;
 
+    // If true, OBJ face winding order is reversed (a,b,c → a,c,b).
+    // Use for engines that expect CW front-face convention (imported meshes
+    // appear inside-out in Blender without this).
+    bool flip_winding = false;
+
     // Absolute frame number (0-based, counting from the first Present after DLL
     // load) on which to capture all draws and write OBJ files. UINT64_MAX
     // means disabled.
