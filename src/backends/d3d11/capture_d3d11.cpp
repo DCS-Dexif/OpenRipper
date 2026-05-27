@@ -15,6 +15,7 @@
 //   6. Return a MeshSnapshot with vertex_streams and index_buffer filled.
 
 #include "capture_d3d11.hpp"
+#include "runtime_state.hpp"
 #include "state_d3d11.hpp"
 #include "../../core/logger.hpp"
 
@@ -23,9 +24,41 @@
 #include <cstring>
 #include <format>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace openripper::backends::d3d11 {
+
+// ---- Per-frame texture dedup map -------------------------------------------
+// Keyed on ID3D11Texture2D* (pointer identity = same GPU resource).
+// Cleared at the start of each capture frame via dedup_begin_frame().
+namespace {
+struct DedupEntry {
+    std::string   file;
+    std::uint32_t native_format{0};
+    std::uint32_t width{0};
+    std::uint32_t height{0};
+    std::uint32_t mip_levels{0};
+};
+std::unordered_map<ID3D11Texture2D*, DedupEntry> s_tex_dedup;
+} // anonymous ns
+
+void dedup_begin_frame() { s_tex_dedup.clear(); }
+
+void dedup_tex_register(ID3D11Texture2D*                   ptr,
+                        std::string_view                   filename,
+                        const openripper::TextureSnapshot& snap_meta)
+{
+    s_tex_dedup.insert_or_assign(ptr, DedupEntry{
+        std::string(filename),
+        snap_meta.native_format,
+        snap_meta.width,
+        snap_meta.height,
+        snap_meta.mip_levels
+    });
+}
+
 namespace {
 
 // ---- Minimal RAII for COM pointers ----------------------------------------
@@ -586,12 +619,12 @@ std::optional<openripper::MeshSnapshot> capture_draw(ID3D11DeviceContext* ctx,
 
 // ---- Texture capture entry point ------------------------------------------
 
-std::vector<std::pair<std::uint32_t, openripper::TextureSnapshot>>
+std::vector<CaptureTexResult>
 capture_pixel_textures(ID3D11DeviceContext* ctx,
                        std::uint32_t        draw_id,
                        std::uint32_t        frame_id)
 {
-    std::vector<std::pair<std::uint32_t, openripper::TextureSnapshot>> results;
+    std::vector<CaptureTexResult> results;
 
     if (ctx->GetType() == D3D11_DEVICE_CONTEXT_DEFERRED) {
         static bool warned = false;
@@ -633,6 +666,25 @@ capture_pixel_textures(ID3D11DeviceContext* ctx,
                                   reinterpret_cast<void**>(tex2d.put()));
         if (!tex2d) continue;
 
+        // Dedup: if we've already captured this texture pointer this frame, skip readback.
+        if (g_dedup) {
+            auto it = s_tex_dedup.find(tex2d.get());
+            if (it != s_tex_dedup.end()) {
+                const auto& de = it->second;
+                OR_LOG_DEBUG("dedup: draw {} slot {} -> reusing {}", draw_id, slot, de.file);
+                CaptureTexResult r;
+                r.slot       = slot;
+                r.source_ptr = tex2d.get();
+                r.reuse_file = de.file;
+                r.reuse_fmt  = de.native_format;
+                r.reuse_w    = de.width;
+                r.reuse_h    = de.height;
+                r.reuse_mips = de.mip_levels;
+                results.push_back(std::move(r));
+                continue;
+            }
+        }
+
         openripper::TextureSnapshot snap;
         snap.name = std::format("frame{:06}_draw{:05}_ps_t{}", frame_id, draw_id, slot);
 
@@ -644,7 +696,11 @@ capture_pixel_textures(ID3D11DeviceContext* ctx,
         OR_LOG_DEBUG("capture_tex: draw {} slot {} -> {}x{} dxgi={} mips={}",
                      draw_id, slot,
                      snap.width, snap.height, snap.native_format, snap.mip_levels);
-        results.emplace_back(slot, std::move(snap));
+        CaptureTexResult r;
+        r.slot       = slot;
+        r.source_ptr = tex2d.get(); // non-owning key; game holds its own ref
+        r.snap       = std::move(snap);
+        results.push_back(std::move(r));
     }
 
     return results;

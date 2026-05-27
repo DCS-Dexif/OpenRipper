@@ -359,8 +359,9 @@ void capture_readback_defaults(std::vector<DrawRecord>& recs,
         // ---- Texture readbacks ---------------------------------------------
         for (auto& [slot, res] : rec.textures) {
             TextureReadback tr;
-            tr.draw_idx = rec.draw_id;
-            tr.srv_slot = slot;
+            tr.draw_idx       = rec.draw_id;
+            tr.srv_slot       = slot;
+            tr.source_resource = res; // non-owning copy for dedup; res still owned here
             if (readback_texture2d(device, queue, res, tr.snap,
                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)) {
                 tr.snap.name = std::format("frame{:06}_draw{:05}_ps_t{}",

@@ -32,6 +32,9 @@ inline bool g_time_freeze_on_rip{false};
 // Stage 4.2: reverse OBJ face winding on export.
 inline bool g_flip_winding{false};
 
+// Skip re-reading duplicate texture resources within a frame.
+inline bool g_dedup{false};
+
 inline std::string g_session_id;
 inline std::string g_target_exe_name;
 

@@ -103,6 +103,7 @@ keys are silently ignored (logged at `trace` level).
 | `freeze_frames` | `1` | Number of consecutive frames to capture per trigger. `1` = single frame; `N` = burst of N frames (output named `frame######_*` per frame). |
 | `time_freeze_on_rip` | `false` | When `true`, the backend skips calling the real `Present` during active capture frames so the display holds on the last pre-capture frame. The game's render thread continues submitting draw calls (which are captured), but no new frame appears until capture finishes. |
 | `flip_winding` | `false` | When `true`, reverses OBJ face winding order on export (`a,b,c` → `a,c,b`). Use for engines that expect CW front-face convention, where imported meshes appear inside-out in Blender/Maya without this flag. |
+| `dedup` | `false` | When `true`, skips GPU readback and file writes for textures whose API resource pointer was already captured earlier in the same frame. The material manifest references the first-written filename for all duplicate slots. Reduces output size significantly in games that share textures across many draw calls (atlases, shadow maps). |
 
 **Example — hotkey-only, 2-frame burst, debug logging:**
 

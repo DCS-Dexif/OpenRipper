@@ -140,26 +140,40 @@ void try_capture(ID3D11DeviceContext* ctx,
 
         // ---- Textures ----
         auto textures = capture_pixel_textures(ctx, draw_id, frame_id);
-        for (auto& [srv_slot, tex] : textures) {
-            bool written = false;
-            std::filesystem::path tex_path;
+        for (auto& tr : textures) {
+            std::string filename;
+            std::uint32_t fmt{0}, w{0}, h{0}, mips{0};
 
-            tex_path = g_output_dir / (tex.name + ".png");
-            if (exporters::write_png(tex, tex_path)) {
-                written = true;
+            if (!tr.reuse_file.empty()) {
+                // Duplicate texture — reuse the already-written file.
+                filename = tr.reuse_file;
+                fmt = tr.reuse_fmt; w = tr.reuse_w; h = tr.reuse_h; mips = tr.reuse_mips;
             } else {
-                tex_path = g_output_dir / (tex.name + ".dds");
-                written = exporters::write_dds(tex, tex_path);
+                std::filesystem::path tp = g_output_dir / (tr.snap.name + ".png");
+                bool written = exporters::write_png(tr.snap, tp);
+                if (!written) {
+                    tp = g_output_dir / (tr.snap.name + ".dds");
+                    written = exporters::write_dds(tr.snap, tp);
+                }
+                if (written) {
+                    filename = tp.filename().string();
+                    fmt  = tr.snap.native_format;
+                    w    = tr.snap.width;
+                    h    = tr.snap.height;
+                    mips = tr.snap.mip_levels;
+                    if (g_dedup && tr.source_ptr)
+                        dedup_tex_register(tr.source_ptr, filename, tr.snap);
+                }
             }
 
-            if (written) {
+            if (!filename.empty()) {
                 exporters::DrawMaterialRecord::Tex t;
-                t.slot          = srv_slot;
-                t.file          = tex_path.filename().string();
-                t.native_format = tex.native_format;
-                t.width         = tex.width;
-                t.height        = tex.height;
-                t.mips          = tex.mip_levels;
+                t.slot          = tr.slot;
+                t.file          = filename;
+                t.native_format = fmt;
+                t.width         = w;
+                t.height        = h;
+                t.mips          = mips;
                 rec.ps_textures.push_back(std::move(t));
             }
         }
@@ -216,6 +230,7 @@ bool present_shared(IDXGISwapChain* sc) {
             overlay_notify(frame, draw_count);
         } else {
             g_capture_draw_idx.store(0, std::memory_order_relaxed);
+            dedup_begin_frame(); // clear dedup map for the next burst frame
             OR_LOG_INFO("capture: {} more frame(s) to go", rem);
         }
     }
@@ -228,6 +243,7 @@ bool present_shared(IDXGISwapChain* sc) {
         g_freeze_frames_remaining.store(g_freeze_count, std::memory_order_release);
         g_capture_draw_idx.store(0, std::memory_order_relaxed);
         g_pending_materials.clear();
+        dedup_begin_frame();
         g_capture_active.store(true, std::memory_order_release);
         OR_LOG_INFO("capture: frame {:06} begin - capturing {} frame(s)",
                     target, g_freeze_count);
@@ -239,6 +255,7 @@ bool present_shared(IDXGISwapChain* sc) {
     {
         g_capture_draw_idx.store(0, std::memory_order_relaxed);
         g_pending_materials.clear();
+        dedup_begin_frame();
         g_capture_active.store(true, std::memory_order_release);
         OR_LOG_INFO("hotkey: frame {:06} begin - capturing {} frame(s)",
                     frame + 1, g_freeze_frames_remaining.load(std::memory_order_relaxed));

@@ -11,6 +11,7 @@
 // hooking Set* methods, keeping the hook count minimal.
 
 #include "capture_d3d9.hpp"
+#include "runtime_state.hpp"
 #include "../../core/logger.hpp"
 
 #include <dxgi.h>
@@ -19,8 +20,38 @@
 #include <cstring>
 #include <format>
 #include <set>
+#include <string_view>
+#include <unordered_map>
 
 namespace openripper::backends::d3d9 {
+
+// ---- Per-frame texture dedup map -------------------------------------------
+namespace {
+struct DedupEntry9 {
+    std::string   file;
+    std::uint32_t native_format{0};
+    std::uint32_t width{0};
+    std::uint32_t height{0};
+    std::uint32_t mip_levels{0};
+};
+std::unordered_map<IDirect3DTexture9*, DedupEntry9> s_tex_dedup;
+} // anonymous ns
+
+void dedup_begin_frame() { s_tex_dedup.clear(); }
+
+void dedup_tex_register(IDirect3DTexture9*                 ptr,
+                        std::string_view                   filename,
+                        const openripper::TextureSnapshot& snap_meta)
+{
+    s_tex_dedup.insert_or_assign(ptr, DedupEntry9{
+        std::string(filename),
+        snap_meta.native_format,
+        snap_meta.width,
+        snap_meta.height,
+        snap_meta.mip_levels
+    });
+}
+
 namespace {
 
 // ---- Primitive helpers -------------------------------------------------------
@@ -471,12 +502,12 @@ capture_mesh_up(D3DPRIMITIVETYPE  prim_type,
     return snap;
 }
 
-std::vector<std::pair<DWORD, openripper::TextureSnapshot>>
+std::vector<CaptureTexResult>
 capture_textures(IDirect3DDevice9* dev,
                  std::uint32_t     draw_id,
                  std::uint32_t     frame_id)
 {
-    std::vector<std::pair<DWORD, openripper::TextureSnapshot>> out;
+    std::vector<CaptureTexResult> out;
     for (DWORD stage = 0; stage < 8; ++stage) {
         IDirect3DBaseTexture9* base = nullptr;
         if (FAILED(dev->GetTexture(stage, &base)) || !base) continue;
@@ -484,9 +515,36 @@ capture_textures(IDirect3DDevice9* dev,
         IDirect3DTexture9* tex2d = nullptr;
         if (SUCCEEDED(base->QueryInterface(IID_IDirect3DTexture9,
                                            reinterpret_cast<void**>(&tex2d)))) {
+            // Dedup: same texture pointer seen earlier in this frame?
+            if (g_dedup) {
+                auto it = s_tex_dedup.find(tex2d);
+                if (it != s_tex_dedup.end()) {
+                    const auto& de = it->second;
+                    OR_LOG_DEBUG("dedup: draw {} stage {} -> reusing {}",
+                                 draw_id, stage, de.file);
+                    CaptureTexResult r;
+                    r.stage      = stage;
+                    r.source_ptr = tex2d;
+                    r.reuse_file = de.file;
+                    r.reuse_fmt  = de.native_format;
+                    r.reuse_w    = de.width;
+                    r.reuse_h    = de.height;
+                    r.reuse_mips = de.mip_levels;
+                    out.push_back(std::move(r));
+                    tex2d->Release();
+                    base->Release();
+                    continue;
+                }
+            }
+
             auto snap = read_texture(tex2d, draw_id, frame_id, stage);
-            if (!snap.subresources.empty())
-                out.emplace_back(stage, std::move(snap));
+            if (!snap.subresources.empty()) {
+                CaptureTexResult r;
+                r.stage      = stage;
+                r.source_ptr = tex2d; // non-owning key; game holds its own ref
+                r.snap       = std::move(snap);
+                out.push_back(std::move(r));
+            }
             tex2d->Release();
         }
         base->Release();

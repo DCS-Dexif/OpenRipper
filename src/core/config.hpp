@@ -38,6 +38,11 @@ struct Config {
     // appear inside-out in Blender without this).
     bool flip_winding = false;
 
+    // If true, skip GPU readback and file writes for textures/meshes whose
+    // API object pointer was already captured earlier in the same frame.
+    // Reuses the first-written filename in the material manifest.
+    bool dedup = false;
+
     // Absolute frame number (0-based, counting from the first Present after DLL
     // load) on which to capture all draws and write OBJ files. UINT64_MAX
     // means disabled.

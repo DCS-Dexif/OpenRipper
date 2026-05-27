@@ -58,6 +58,7 @@ struct TextureReadback {
     std::uint32_t draw_idx;
     std::uint32_t srv_slot;
     openripper::TextureSnapshot snap;
+    ID3D12Resource* source_resource{nullptr}; // non-owning; for per-frame dedup
 };
 void capture_readback_defaults(std::vector<DrawRecord>& recs,
                                 ID3D12Device* device,

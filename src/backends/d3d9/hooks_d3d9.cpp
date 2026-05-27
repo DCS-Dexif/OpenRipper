@@ -123,24 +123,37 @@ void try_capture_indexed(IDirect3DDevice9* dev,
             }
         }
 
-        for (auto& [slot, tex] : capture_textures(dev, draw_id, frame_id)) {
-            bool written = false;
-            std::filesystem::path tex_path;
-            tex_path = g_output_dir / (tex.name + ".png");
-            if (exporters::write_png(tex, tex_path)) {
-                written = true;
+        for (auto& tr : capture_textures(dev, draw_id, frame_id)) {
+            std::string filename;
+            std::uint32_t fmt{0}, w{0}, h{0}, mips{0};
+            if (!tr.reuse_file.empty()) {
+                filename = tr.reuse_file;
+                fmt = tr.reuse_fmt; w = tr.reuse_w; h = tr.reuse_h; mips = tr.reuse_mips;
             } else {
-                tex_path = g_output_dir / (tex.name + ".dds");
-                written = exporters::write_dds(tex, tex_path);
+                std::filesystem::path tp = g_output_dir / (tr.snap.name + ".png");
+                bool written = exporters::write_png(tr.snap, tp);
+                if (!written) {
+                    tp = g_output_dir / (tr.snap.name + ".dds");
+                    written = exporters::write_dds(tr.snap, tp);
+                }
+                if (written) {
+                    filename = tp.filename().string();
+                    fmt  = tr.snap.native_format;
+                    w    = tr.snap.width;
+                    h    = tr.snap.height;
+                    mips = tr.snap.mip_levels;
+                    if (g_dedup && tr.source_ptr)
+                        dedup_tex_register(tr.source_ptr, filename, tr.snap);
+                }
             }
-            if (written) {
+            if (!filename.empty()) {
                 exporters::DrawMaterialRecord::Tex t;
-                t.slot          = static_cast<std::uint32_t>(slot);
-                t.file          = tex_path.filename().string();
-                t.native_format = tex.native_format;
-                t.width         = tex.width;
-                t.height        = tex.height;
-                t.mips          = tex.mip_levels;
+                t.slot          = static_cast<std::uint32_t>(tr.stage);
+                t.file          = filename;
+                t.native_format = fmt;
+                t.width         = w;
+                t.height        = h;
+                t.mips          = mips;
                 rec.ps_textures.push_back(std::move(t));
             }
         }
@@ -184,21 +197,37 @@ void try_capture_nonindexed(IDirect3DDevice9* dev,
                 rec.mesh_file = obj_path.filename().string();
         }
 
-        for (auto& [slot, tex] : capture_textures(dev, draw_id, frame_id)) {
-            std::filesystem::path tex_path = g_output_dir / (tex.name + ".png");
-            bool written = exporters::write_png(tex, tex_path);
-            if (!written) {
-                tex_path = g_output_dir / (tex.name + ".dds");
-                written = exporters::write_dds(tex, tex_path);
+        for (auto& tr : capture_textures(dev, draw_id, frame_id)) {
+            std::string filename;
+            std::uint32_t fmt{0}, w{0}, h{0}, mips{0};
+            if (!tr.reuse_file.empty()) {
+                filename = tr.reuse_file;
+                fmt = tr.reuse_fmt; w = tr.reuse_w; h = tr.reuse_h; mips = tr.reuse_mips;
+            } else {
+                std::filesystem::path tp = g_output_dir / (tr.snap.name + ".png");
+                bool written = exporters::write_png(tr.snap, tp);
+                if (!written) {
+                    tp = g_output_dir / (tr.snap.name + ".dds");
+                    written = exporters::write_dds(tr.snap, tp);
+                }
+                if (written) {
+                    filename = tp.filename().string();
+                    fmt  = tr.snap.native_format;
+                    w    = tr.snap.width;
+                    h    = tr.snap.height;
+                    mips = tr.snap.mip_levels;
+                    if (g_dedup && tr.source_ptr)
+                        dedup_tex_register(tr.source_ptr, filename, tr.snap);
+                }
             }
-            if (written) {
+            if (!filename.empty()) {
                 exporters::DrawMaterialRecord::Tex t;
-                t.slot          = static_cast<std::uint32_t>(slot);
-                t.file          = tex_path.filename().string();
-                t.native_format = tex.native_format;
-                t.width         = tex.width;
-                t.height        = tex.height;
-                t.mips          = tex.mip_levels;
+                t.slot          = static_cast<std::uint32_t>(tr.stage);
+                t.file          = filename;
+                t.native_format = fmt;
+                t.width         = w;
+                t.height        = h;
+                t.mips          = mips;
                 rec.ps_textures.push_back(std::move(t));
             }
         }
@@ -272,6 +301,7 @@ HRESULT STDMETHODCALLTYPE hooked_present(
             overlay_notify(frame, draw_count);
         } else {
             g_capture_draw_idx.store(0, std::memory_order_relaxed);
+            dedup_begin_frame(); // clear dedup map for next burst frame
             OR_LOG_INFO("capture: {} more frame(s) to go", rem);
         }
     }
@@ -284,6 +314,7 @@ HRESULT STDMETHODCALLTYPE hooked_present(
         g_freeze_frames_remaining.store(g_freeze_count, std::memory_order_release);
         g_capture_draw_idx.store(0, std::memory_order_relaxed);
         g_pending_materials.clear();
+        dedup_begin_frame();
         g_capture_active.store(true, std::memory_order_release);
         OR_LOG_INFO("capture: frame {:06} begin - capturing {} frame(s)",
                     target, g_freeze_count);
@@ -295,6 +326,7 @@ HRESULT STDMETHODCALLTYPE hooked_present(
     {
         g_capture_draw_idx.store(0, std::memory_order_relaxed);
         g_pending_materials.clear();
+        dedup_begin_frame();
         g_capture_active.store(true, std::memory_order_release);
         OR_LOG_INFO("hotkey: frame {:06} begin - capturing {} frame(s)",
                     frame + 1, g_freeze_frames_remaining.load(std::memory_order_relaxed));

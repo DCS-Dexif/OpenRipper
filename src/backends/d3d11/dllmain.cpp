@@ -58,6 +58,7 @@ DWORD WINAPI init_thread(LPVOID) {
     openripper::backends::d3d11::g_freeze_count         = (cfg.freeze_frames > 0) ? cfg.freeze_frames : 1;
     openripper::backends::d3d11::g_time_freeze_on_rip   = cfg.time_freeze_on_rip;
     openripper::backends::d3d11::g_flip_winding         = cfg.flip_winding;
+    openripper::backends::d3d11::g_dedup                = cfg.dedup;
 
     // ---- Session output directory (always created — hotkey can trigger at any time) ---
     const auto out = cfg.output_dir.is_absolute()

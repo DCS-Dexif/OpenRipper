@@ -55,6 +55,7 @@
 #include <format>
 #include <limits>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace openripper::backends::d3d12 {
@@ -277,29 +278,62 @@ std::uint32_t flush_frame(std::uint64_t frame) {
         }
 
         // Assign textures to the corresponding material records.
+        // When g_dedup is on, a per-frame map keyed on source_resource avoids
+        // writing the same GPU resource more than once per frame.
+        struct DedupEntry12 {
+            std::string   file;
+            std::uint32_t native_format{0}, width{0}, height{0}, mip_levels{0};
+        };
+        std::unordered_map<ID3D12Resource*, DedupEntry12> tex_dedup;
+
         for (auto& tr : tex_readbacks) {
-            for (auto& mat : g_pending_materials) {
-                if (mat.draw_id != tr.draw_idx) continue;
-                bool written = false;
-                std::filesystem::path tp;
-                tp = g_output_dir / (tr.snap.name + ".png");
-                if (exporters::write_png(tr.snap, tp))
-                    written = true;
-                else {
+            std::string filename;
+            std::uint32_t fmt{0}, w{0}, h{0}, mips{0};
+
+            if (g_dedup && tr.source_resource) {
+                auto it = tex_dedup.find(tr.source_resource);
+                if (it != tex_dedup.end()) {
+                    const auto& de = it->second;
+                    filename = de.file;
+                    fmt = de.native_format; w = de.width; h = de.height; mips = de.mip_levels;
+                    OR_LOG_DEBUG("dedup: draw {} slot {} -> reusing {}",
+                                 tr.draw_idx, tr.srv_slot, filename);
+                }
+            }
+
+            if (filename.empty()) {
+                // Not a dedup hit — write the file.
+                std::filesystem::path tp = g_output_dir / (tr.snap.name + ".png");
+                bool written = exporters::write_png(tr.snap, tp);
+                if (!written) {
                     tp = g_output_dir / (tr.snap.name + ".dds");
                     written = exporters::write_dds(tr.snap, tp);
                 }
                 if (written) {
+                    filename = tp.filename().string();
+                    fmt  = tr.snap.native_format;
+                    w    = tr.snap.width;
+                    h    = tr.snap.height;
+                    mips = tr.snap.mip_levels;
+                    if (g_dedup && tr.source_resource)
+                        tex_dedup.insert_or_assign(tr.source_resource,
+                            DedupEntry12{filename, fmt, w, h, mips});
+                }
+            }
+
+            if (!filename.empty()) {
+                for (auto& mat : g_pending_materials) {
+                    if (mat.draw_id != tr.draw_idx) continue;
                     exporters::DrawMaterialRecord::Tex t;
                     t.slot          = tr.srv_slot;
-                    t.file          = tp.filename().string();
-                    t.native_format = tr.snap.native_format;
-                    t.width         = tr.snap.width;
-                    t.height        = tr.snap.height;
-                    t.mips          = tr.snap.mip_levels;
+                    t.file          = filename;
+                    t.native_format = fmt;
+                    t.width         = w;
+                    t.height        = h;
+                    t.mips          = mips;
                     mat.ps_textures.push_back(std::move(t));
+                    break;
                 }
-                break;
             }
         }
 
