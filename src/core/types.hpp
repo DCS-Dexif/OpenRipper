@@ -72,6 +72,7 @@ enum class PrimitiveTopology : std::uint8_t {
     LineStrip,
     TriangleList,
     TriangleStrip,
+    TriangleFan,
 };
 
 struct MeshSnapshot {

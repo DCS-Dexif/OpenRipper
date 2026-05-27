@@ -135,7 +135,8 @@ inline std::size_t vertex_count_from(const std::vector<float>& v, std::size_t co
 
 } // namespace
 
-bool write_obj(const MeshSnapshot& mesh, const std::filesystem::path& out_path) {
+bool write_obj(const MeshSnapshot& mesh, const std::filesystem::path& out_path,
+               bool flip_winding) {
     // ---- Locate required Position attribute --------------------------------
     const VertexAttribute* pos_attr = nullptr;
     for (const auto& a : mesh.layout.attributes)
@@ -183,6 +184,7 @@ bool write_obj(const MeshSnapshot& mesh, const std::filesystem::path& out_path) 
 
     // ---- Clamp vcount to the highest index actually referenced ----------------
     // Prevents writing the full shared VB when only a small slice is indexed.
+    // Scan every index regardless of topology; we only need the max resolved ref.
     if (mesh.index_format != IndexFormat::None && !mesh.index_buffer.empty()) {
         std::uint32_t max_ref = 0;
         bool any = false;
@@ -195,21 +197,15 @@ bool write_obj(const MeshSnapshot& mesh, const std::filesystem::path& out_path) 
         };
 
         if (mesh.index_format == IndexFormat::U16) {
-            const auto* base = reinterpret_cast<const std::uint16_t*>(mesh.index_buffer.data());
-            const auto* idx  = base + mesh.start_index;
-            for (std::uint32_t i = 0; i + 2 < mesh.index_count; i += 3) {
-                update(static_cast<std::int64_t>(idx[i])     + mesh.base_vertex);
-                update(static_cast<std::int64_t>(idx[i + 1]) + mesh.base_vertex);
-                update(static_cast<std::int64_t>(idx[i + 2]) + mesh.base_vertex);
-            }
+            const auto* idx = reinterpret_cast<const std::uint16_t*>(mesh.index_buffer.data())
+                              + mesh.start_index;
+            for (std::uint32_t i = 0; i < mesh.index_count; ++i)
+                update(static_cast<std::int64_t>(idx[i]) + mesh.base_vertex);
         } else {
-            const auto* base = reinterpret_cast<const std::uint32_t*>(mesh.index_buffer.data());
-            const auto* idx  = base + mesh.start_index;
-            for (std::uint32_t i = 0; i + 2 < mesh.index_count; i += 3) {
-                update(static_cast<std::int64_t>(idx[i])     + mesh.base_vertex);
-                update(static_cast<std::int64_t>(idx[i + 1]) + mesh.base_vertex);
-                update(static_cast<std::int64_t>(idx[i + 2]) + mesh.base_vertex);
-            }
+            const auto* idx = reinterpret_cast<const std::uint32_t*>(mesh.index_buffer.data())
+                              + mesh.start_index;
+            for (std::uint32_t i = 0; i < mesh.index_count; ++i)
+                update(static_cast<std::int64_t>(idx[i]) + mesh.base_vertex);
         }
 
         if (any) vcount = std::min(vcount, static_cast<std::size_t>(max_ref) + 1);
@@ -267,11 +263,6 @@ bool write_obj(const MeshSnapshot& mesh, const std::filesystem::path& out_path) 
     //   all three       →  "f a/a/a b/b/b c/c/c"
     // Because we emit exactly vcount vt/vn entries (same order as v), the
     // vertex index serves as the UV and normal index too.
-    //
-    // Only TriangleList topology produces correct faces here. Other topologies
-    // are captured into MeshSnapshot but the face decoder below assumes
-    // consecutive triples → triangles. Non-triangleList draws are rare in
-    // modern pipelines and will be handled per-topology in a future stage.
     auto emit_face_vertex = [&](std::uint32_t zero_based) {
         const auto i = zero_based + 1;   // convert to 1-based OBJ index
         if (has_uvs && has_normals)      f << i << '/' << i << '/' << i;
@@ -281,6 +272,7 @@ bool write_obj(const MeshSnapshot& mesh, const std::filesystem::path& out_path) 
     };
 
     auto emit_triangle = [&](std::uint32_t a, std::uint32_t b, std::uint32_t c) {
+        if (flip_winding) std::swap(b, c);
         f << 'f' << ' ';
         emit_face_vertex(a); f << ' ';
         emit_face_vertex(b); f << ' ';
@@ -304,29 +296,75 @@ bool write_obj(const MeshSnapshot& mesh, const std::filesystem::path& out_path) 
                       static_cast<std::uint32_t>(c));
     };
 
+    // Topology-aware face emission.
+    // TriangleStrip: odd-numbered triangles reverse the first two vertices to
+    // maintain consistent front-face winding (D3D9 convention).
+    // TriangleFan: every triangle shares vertex 0 (the fan centre).
+    const auto topo = mesh.topology;
+
+    auto emit_indexed_strip_or_fan = [&](const auto* idx) {
+        if (topo == PrimitiveTopology::TriangleStrip) {
+            for (std::uint32_t i = 0; i + 2 < mesh.index_count; ++i) {
+                if (i % 2 == 0)
+                    emit_indexed_triangle(idx[i], idx[i + 1], idx[i + 2]);
+                else
+                    emit_indexed_triangle(idx[i + 1], idx[i], idx[i + 2]);
+            }
+        } else { // TriangleFan
+            for (std::uint32_t i = 1; i + 1 < mesh.index_count; ++i)
+                emit_indexed_triangle(idx[0], idx[i], idx[i + 1]);
+        }
+    };
+
     if (mesh.index_format == IndexFormat::U16) {
-        const auto* base = reinterpret_cast<const std::uint16_t*>(mesh.index_buffer.data());
-        const auto* idx  = base + mesh.start_index;
-        for (std::uint32_t i = 0; i + 2 < mesh.index_count; i += 3)
-            emit_indexed_triangle(idx[i], idx[i + 1], idx[i + 2]);
+        const auto* idx = reinterpret_cast<const std::uint16_t*>(mesh.index_buffer.data())
+                          + mesh.start_index;
+        if (topo == PrimitiveTopology::TriangleList) {
+            for (std::uint32_t i = 0; i + 2 < mesh.index_count; i += 3)
+                emit_indexed_triangle(idx[i], idx[i + 1], idx[i + 2]);
+        } else {
+            emit_indexed_strip_or_fan(idx);
+        }
     } else if (mesh.index_format == IndexFormat::U32) {
-        const auto* base = reinterpret_cast<const std::uint32_t*>(mesh.index_buffer.data());
-        const auto* idx  = base + mesh.start_index;
-        for (std::uint32_t i = 0; i + 2 < mesh.index_count; i += 3)
-            emit_indexed_triangle(idx[i], idx[i + 1], idx[i + 2]);
+        const auto* idx = reinterpret_cast<const std::uint32_t*>(mesh.index_buffer.data())
+                          + mesh.start_index;
+        if (topo == PrimitiveTopology::TriangleList) {
+            for (std::uint32_t i = 0; i + 2 < mesh.index_count; i += 3)
+                emit_indexed_triangle(idx[i], idx[i + 1], idx[i + 2]);
+        } else {
+            emit_indexed_strip_or_fan(idx);
+        }
     } else {
-        // Non-indexed: consecutive vertices form triangles.
+        // Non-indexed: generate triangles directly from vertex order.
         const auto n = static_cast<std::uint32_t>(vcount);
-        for (std::uint32_t i = 0; i + 2 < n; i += 3)
-            emit_triangle(i, i + 1, i + 2);
+        if (topo == PrimitiveTopology::TriangleStrip) {
+            for (std::uint32_t i = 0; i + 2 < n; ++i) {
+                if (i % 2 == 0) emit_triangle(i, i + 1, i + 2);
+                else             emit_triangle(i + 1, i, i + 2);
+            }
+        } else if (topo == PrimitiveTopology::TriangleFan) {
+            for (std::uint32_t i = 1; i + 1 < n; ++i)
+                emit_triangle(0, i, i + 1);
+        } else {
+            for (std::uint32_t i = 0; i + 2 < n; i += 3)
+                emit_triangle(i, i + 1, i + 2);
+        }
+    }
+
+    const bool has_ib = mesh.index_format != IndexFormat::None && !mesh.index_buffer.empty();
+    const std::size_t idx_n = has_ib ? mesh.index_count : vcount;
+    std::size_t tri_count = 0;
+    switch (topo) {
+    case PrimitiveTopology::TriangleList:  tri_count = idx_n / 3;                          break;
+    case PrimitiveTopology::TriangleStrip:
+    case PrimitiveTopology::TriangleFan:   tri_count = idx_n >= 2 ? idx_n - 2 : 0;         break;
+    default:                               tri_count = 0;                                   break;
     }
 
     OR_LOG_INFO("obj exporter: wrote '{}' ({} verts, {} tris{}{})",
                 out_path.filename().string(),
                 vcount,
-                mesh.index_format != IndexFormat::None
-                    ? mesh.index_count / 3
-                    : vcount / 3,
+                tri_count,
                 has_uvs     ? " +uvs"     : "",
                 has_normals ? " +normals" : "");
     return true;
